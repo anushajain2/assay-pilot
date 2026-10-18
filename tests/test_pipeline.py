@@ -176,26 +176,68 @@ def test_empty_candidate_pool_is_rejected(simulated_inputs, physchem_suite):
         plan_batch(campaign, empty, measurements, suite=physchem_suite)
 
 
-def test_a_method_that_cannot_run_is_named_rather_than_skipped(simulated_inputs, physchem_suite):
-    """Whether or not ESM is installed, the report must account for all three methods."""
+def test_a_missing_backend_is_named_with_its_reason(simulated_inputs, physchem_suite, monkeypatch):
+    """A method whose backend is missing is reported, not silently skipped.
+
+    torch's absence is simulated rather than depended on, so this holds in
+    both environments: the bug it guards against is a method vanishing from a
+    comparison without the report saying so.
+    """
     from dataclasses import replace as replace_dataclass
 
-    from assaypilot.features.esm import esm_available
+    import assaypilot.models.pretrained as pretrained_module
 
-    if esm_available():
-        pytest.skip("ESM is installed; the available case is covered by tests/test_esm.py")
+    monkeypatch.setattr(pretrained_module, "esm_available", lambda: False)
 
     campaign, measurements, candidates = simulated_inputs
-    with_pretrained = replace_dataclass(physchem_suite, include_pretrained=True)
-    plan = plan_batch(
-        campaign, candidates, measurements, suite=with_pretrained, n_bootstrap=20, seed=0
+    # representation="esm2" is what builds the pretrained method at all; the
+    # assay-trained one is left out so the comparison still has a usable method.
+    suite = replace_dataclass(
+        physchem_suite,
+        representation="esm2",
+        include_pretrained=True,
+        include_assay_trained=False,
     )
+    plan = plan_batch(campaign, candidates, measurements, suite=suite, n_bootstrap=20, seed=0)
 
     assert plan.evaluation is not None
     assert "pretrained_esm_masked_marginal" in plan.evaluation.unavailable
     reason = plan.evaluation.unavailable["pretrained_esm_masked_marginal"]
     assert "torch" in reason and "assaypilot[esm]" in reason
     assert any("pretrained" in warning for warning in plan.warnings)
+    # The comparison carried on with the method that could run.
+    assert plan.method_key == "baseline_onehot_ridge"
+
+
+def test_choosing_physchem_says_why_the_pretrained_score_did_not_run(
+    simulated_inputs, physchem_suite
+):
+    """'physchem' means no protein language model, and the report says so.
+
+    This is not the same statement as "the backend was missing": the method
+    could have run here, and the configuration is why it did not.
+    """
+    from dataclasses import replace as replace_dataclass
+
+    campaign, measurements, candidates = simulated_inputs
+    suite = replace_dataclass(physchem_suite, include_pretrained=True)
+    plan = plan_batch(campaign, candidates, measurements, suite=suite, n_bootstrap=20, seed=0)
+
+    assert plan.evaluation is not None
+    reason = plan.evaluation.unavailable.get("pretrained_esm_masked_marginal", "")
+    assert "no protein language model" in reason
+    assert "torch" not in reason
+    assert "--representation esm2" in reason
+
+
+def test_a_method_switched_off_is_still_accounted_for(simulated_inputs, physchem_suite):
+    """Turning a method off must not make it disappear from the report silently."""
+    plan = _plan(simulated_inputs, physchem_suite)  # include_pretrained=False
+
+    assert plan.evaluation is not None
+    reason = plan.evaluation.unavailable.get("pretrained_esm_masked_marginal", "")
+    assert reason, "a method left out of the suite must still be named"
+    assert "excluded by the suite configuration" in reason
 
 
 def test_rank_variability_is_attached_when_requested(simulated_inputs, physchem_suite):

@@ -128,19 +128,25 @@ def excluded_by_config(config: SuiteConfig | None = None) -> dict[str, str]:
     backend was missing".
     """
     config = config or SuiteConfig()
+    by_configuration = "not run: excluded by the suite configuration"
     excluded: dict[str, str] = {}
-    if config.representation == "physchem" and config.include_pretrained:
+
+    if not config.include_baseline:
+        excluded["baseline_onehot_ridge"] = by_configuration
+    if not config.include_assay_trained:
+        excluded["assay_trained_embedding_ridge"] = by_configuration
+
+    # Both conditions can hold at once, so this is a chain rather than two
+    # independent checks: an earlier version left the method out with *no*
+    # reason when the suite both selected physchem and switched it off.
+    if not config.include_pretrained:
+        excluded["pretrained_esm_masked_marginal"] = by_configuration
+    elif config.representation == "physchem":
         excluded["pretrained_esm_masked_marginal"] = (
             "not run: the physicochemical representation was selected, which uses no protein"
             " language model. Use --representation esm2 to include the pretrained ESM-2"
             " score."
         )
-    if not config.include_baseline:
-        excluded["baseline_onehot_ridge"] = "not run: excluded by the suite configuration"
-    if not config.include_assay_trained:
-        excluded["assay_trained_embedding_ridge"] = "not run: excluded by the suite configuration"
-    if config.representation != "physchem" and not config.include_pretrained:
-        excluded["pretrained_esm_masked_marginal"] = "not run: excluded by the suite configuration"
     return excluded
 
 
