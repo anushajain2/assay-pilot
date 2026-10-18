@@ -228,6 +228,12 @@ class MeasurementSet:
     def conflicting_replicates(self, *, relative_spread: float = 0.5) -> pd.DataFrame:
         """Sequences whose replicates disagree by more than ``relative_spread``.
 
+        The comparison is against the larger of the sequence's own mean and the
+        spread of the whole assay (its interquartile range). Using the mean
+        alone would be meaningless for an assay centred near zero — a log-ratio
+        or a z-scored readout — where a tiny absolute disagreement divided by a
+        near-zero mean looks enormous.
+
         The disagreement is exposed, never resolved: the raw values stay in the
         table and no replicate is dropped.
         """
@@ -235,8 +241,16 @@ class MeasurementSet:
         multi = summary[summary["n_measurements"] > 1].copy()
         if multi.empty:
             return multi
-        scale = multi["mean_value"].abs().replace(0, np.nan)
-        multi["relative_spread"] = (multi["range_value"] / scale).fillna(np.inf)
+
+        values = self.frame["value"].to_numpy(dtype=float)
+        assay_scale = float(np.subtract(*np.percentile(values, [75, 25]))) if len(values) else 0.0
+        assay_scale = abs(assay_scale)
+
+        scale = np.maximum(multi["mean_value"].abs().to_numpy(dtype=float), assay_scale)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            multi["relative_spread"] = np.where(
+                scale > 0, multi["range_value"].to_numpy(dtype=float) / scale, np.inf
+            )
         return multi[multi["relative_spread"] > relative_spread].reset_index(drop=True)
 
     def to_dict(self) -> dict[str, Any]:

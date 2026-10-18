@@ -14,7 +14,7 @@ that records every input checksum, seed, and hyperparameter behind the decision.
 It runs locally. Your measurements are never sent anywhere.
 
 ```bash
-pip install "assaypilot[esm]"
+pip install -e ".[esm]"              # from a checkout; see Install
 assaypilot demo -o demo_output       # whole workflow on simulated data, no downloads
 ```
 
@@ -26,6 +26,7 @@ assaypilot demo -o demo_output       # whole workflow on simulated data, no down
 - [What it does, concretely](#what-it-does-concretely)
 - [Install](#install)
 - [Quickstart](#quickstart)
+- [What a run actually says](#what-a-run-actually-says)
 - [Input formats](#input-formats)
 - [How the decision is made](#how-the-decision-is-made)
 - [What comes out](#what-comes-out)
@@ -35,6 +36,7 @@ assaypilot demo -o demo_output       # whole workflow on simulated data, no down
 - [Scope of version one](#scope-of-version-one)
 - [What AssayPilot claims, and what it does not](#what-assaypilot-claims-and-what-it-does-not)
 - [How it relates to existing tools](#how-it-relates-to-existing-tools)
+- [Documentation](#documentation)
 - [Project layout](#project-layout)
 - [Development](#development)
 - [Status](#status)
@@ -93,23 +95,25 @@ correlation into a winner.
 
 ## Install
 
-Python 3.10 or newer.
-
-```bash
-pip install assaypilot                 # core: validation, baseline, selection, exports
-pip install "assaypilot[esm]"          # adds ESM-2 (torch + transformers)
-pip install "assaypilot[app]"          # adds the Streamlit interface
-pip install "assaypilot[esm,app,dev]"  # everything, including the test suite
-```
-
-From a checkout:
+Python 3.10 or newer. AssayPilot is not on PyPI yet, so install from a
+checkout:
 
 ```bash
 git clone https://github.com/assaypilot/assaypilot.git
 cd assaypilot
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[esm,app,dev]"
 pytest
 ```
+
+The extras are independent, so install only what you need:
+
+| Extra | Adds |
+| --- | --- |
+| *(none)* | Validation, the simple baseline, selection, exports, CLI |
+| `esm` | ESM-2 embeddings and masked-marginal scores (torch + transformers) |
+| `app` | The Streamlit interface |
+| `dev` | Test suite and linter |
 
 **Without the `esm` extra**, AssayPilot still runs end to end: the pretrained ESM-2 score is
 reported as unavailable (with the reason), and the assay-trained model uses a dependency-free
@@ -130,6 +134,21 @@ open demo_output/plan/report.html
 This generates a synthetic campaign (150 measured variants across 3 rounds, 1,000 candidates),
 runs the full workflow, and writes the exports. The data is simulated by a documented generative
 model and says nothing about any real protein — every artifact is labelled accordingly.
+
+A checked-in copy of the same kind of campaign lives in
+[`examples/simulated-enzyme/`](examples/simulated-enzyme/), so you can look at the input files
+before preparing your own:
+
+```bash
+assaypilot plan \
+  --campaign examples/simulated-enzyme/campaign.json \
+  --measurements examples/simulated-enzyme/measurements.csv \
+  --candidates examples/simulated-enzyme/candidates.csv \
+  --representation physchem --rank-variability 20 -o example_plan
+```
+
+`measurements.csv` uses full sequences and `candidates.csv` uses mutation notation, so between
+them the example shows both accepted input styles.
 
 ### 2. Run it on your own campaign
 
@@ -190,6 +209,55 @@ assaypilot app
 ```
 
 Four screens: import and review, model evidence, batch selection, round history.
+
+---
+
+## What a run actually says
+
+This is real, unedited output from the bundled example — including the parts most tools would
+rather not print:
+
+```
+24 of 24 requested candidates selected using Simple baseline (one-hot substitutions, ridge)
+with the top_ranked policy — supported by held-out evaluation.
+
+Prediction task
+---------------
+trained on round(s) R1, evaluated on round R2
+trained on round(s) R1, R2, evaluated on round R3
+(extrapolation evaluation)
+
+Method comparison
+-----------------
+                                      method_name  spearman  hit_rate_at_k  best_at_k
+   Simple baseline (one-hot substitutions, ridge)  0.310995       0.166667   2.435122
+Assay-trained model (physchem embeddings + ridge)  0.256996       0.166667   2.811314
+
+Why this method
+---------------
+assay_trained_embedding_ridge did not improve on baseline_onehot_ridge: Hit rate in the top
+batch: +0.002 versus baseline_onehot_ridge (95% interval -0.104 to +0.146), not distinguishable
+from the reference within the resampling interval.
+No method was distinguishable from the simplest supported method within the resampling
+interval, so the simpler method is used.
+
+Warnings
+--------
+- pretrained_esm_masked_marginal was not available: torch and transformers are not installed...
+- 42 of 300 candidates are further from the measured variants than anything the evaluation
+  covered (more than 3 substitutions away). The reported performance does not extend to them;
+  you can restrict selection to the evaluated range.
+- 94% of candidates carry at least one substitution that never appears in the measurements.
+  The simple baseline cannot represent those substitutions at all, and the other methods are
+  extrapolating.
+```
+
+Three things to notice, because they are the design working rather than failing:
+
+- the fancier method had a higher `best_at_k`, and was **still not adopted**, because the
+  interval for its improvement on the primary metric spans zero;
+- a method that could not run is named, with the reason, instead of disappearing;
+- the candidates the evidence does not cover are counted before you spend wells on them.
 
 ---
 
@@ -458,6 +526,19 @@ portable, so it can be used as a standalone tool or as a module inside another p
 
 ---
 
+## Documentation
+
+| Page | What it covers |
+| --- | --- |
+| [docs/claims.md](docs/claims.md) | Every claim the software makes, what it refuses to claim, and the code and test enforcing each one |
+| [docs/methodology.md](docs/methodology.md) | Why the splits, metrics, bootstrap, and selection rule are what they are |
+| [docs/data-formats.md](docs/data-formats.md) | Every input column and output file, field by field |
+| [docs/representations.md](docs/representations.md) | One-hot, ESM-2, physicochemical features, the embedding cache, adding your own |
+| [docs/benchmarks.md](docs/benchmarks.md) | Replaying public datasets, and the reporting rules that keep it honest |
+| [docs/testing.md](docs/testing.md) | What each test module protects against |
+
+---
+
 ## Project layout
 
 ```
@@ -476,10 +557,14 @@ src/assaypilot/
   store.py             SQLite campaign history (append-only)
   scoring.py           Scoring a plan against the round that followed
   cli.py               Command line
-docs/                  Claims, methodology, data formats, benchmarks, representations
-scripts/               Helpers for fetching public datasets and regenerating figures
+docs/                  Claims, methodology, data formats, benchmarks, representations, testing
+examples/              A labelled synthetic campaign you can run immediately
+scripts/               Fetch public datasets, run replays, regenerate the example
 tests/                 Validation, leakage, constraints, determinism, end-to-end
 ```
+
+Start reading at [`pipeline.py`](src/assaypilot/pipeline.py): it is the single implementation of
+the decision, and every other entry point calls it.
 
 ---
 

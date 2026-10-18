@@ -87,9 +87,7 @@ def _show_report(report, title: str) -> None:
     counts = report.counts_by_code()
     if counts:
         st.dataframe(
-            pd.DataFrame(
-                [{"reason": code, "rows": count} for code, count in counts.items()]
-            ),
+            pd.DataFrame([{"reason": code, "rows": count} for code, count in counts.items()]),
             hide_index=True,
             use_container_width=True,
         )
@@ -305,7 +303,7 @@ def _suite_controls() -> SuiteConfig:
             "torch and transformers are not installed, so ESM-2 is unavailable. The"
             " physicochemical representation is used instead — it is not a protein language"
             " model, and results are labelled accordingly. Install with"
-            " `pip install \"assaypilot[esm]\"` to enable ESM-2."
+            ' `pip install "assaypilot[esm]"` to enable ESM-2.'
         )
     representation = st.selectbox(
         "Sequence representation",
@@ -368,8 +366,7 @@ def screen_plan() -> None:
         restrict = st.checkbox(
             "Restrict to the evaluated region",
             help=(
-                "Exclude candidates further from the measured variants than the evaluation"
-                " covered."
+                "Exclude candidates further from the measured variants than the evaluation covered."
             ),
         )
         refits = st.number_input(
@@ -435,8 +432,7 @@ def screen_plan() -> None:
             for split in evaluation.split_plan.splits:
                 st.write(f"- {split.description}")
             st.caption(
-                f"{evaluation.split_plan.rationale}"
-                f" This is an {evaluation.split_plan.label}."
+                f"{evaluation.split_plan.rationale} This is an {evaluation.split_plan.label}."
             )
 
             st.markdown("**How each method scored**")
