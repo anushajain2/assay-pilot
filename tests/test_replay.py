@@ -73,12 +73,18 @@ def test_summary_and_comparison_tables(simulated, replay_config):
     result = replay_campaign(simulated.campaign, simulated.measurements, replay_config)
 
     summary = result.summary()
-    assert {"strategy", "best_found_mean", "experiments"} <= set(summary.columns)
+    assert {
+        "strategy",
+        "best_selected_mean",
+        "best_found_mean",
+        "experiments",
+    } <= set(summary.columns)
     assert len(summary) == len(set(result.frame["strategy"]))
 
     comparison = compare_strategies(result, reference="random")
     assert "random" not in set(comparison["strategy"])
-    assert {"mean_difference", "n_seeds", "wins"} <= set(comparison.columns)
+    assert {"mean_difference", "n_seeds", "wins", "metric"} <= set(comparison.columns)
+    assert set(comparison["metric"]) == {"best_selected"}
     assert (comparison["n_seeds"] == len(replay_config.seeds)).all()
 
 
@@ -100,3 +106,34 @@ def test_unknown_reference_strategy_is_rejected(simulated, replay_config):
     result = replay_campaign(simulated.campaign, simulated.measurements, replay_config)
     with pytest.raises(ValueError, match="no strategy named"):
         compare_strategies(result, reference="not-a-strategy")
+
+
+def test_best_selected_ignores_the_shared_initial_set(simulated, replay_config):
+    """best_found can saturate on the initial reveal; best_selected cannot."""
+    result = replay_campaign(simulated.campaign, simulated.measurements, replay_config)
+    frame = result.frame
+
+    # Every strategy starts from the same revealed set, so best_found is >=
+    # best_selected and can be identical across strategies even when their
+    # choices differ.
+    assert (frame["best_found"] >= frame["best_selected"] - 1e-9).all()
+
+    for _, group in frame.groupby(["strategy", "seed"]):
+        values = group.sort_values("round")["best_selected"].tolist()
+        assert values == sorted(values)
+
+
+def test_a_binding_diversity_constraint_changes_the_outcome(simulated, replay_config):
+    """With a constraint that actually binds, the diversity variant must diverge."""
+    from dataclasses import replace
+
+    binding = replace(replay_config, diversity_min_distance=8)
+    result = replay_campaign(simulated.campaign, simulated.measurements, binding)
+    final = result.frame.sort_values("round").groupby(["strategy", "seed"]).tail(1)
+    pivot = final.pivot(index="seed", columns="strategy", values="cumulative_experiments")
+
+    plain = "assay_trained_embedding_ridge"
+    diverse = f"{plain}+diversity"
+    assert diverse in pivot.columns
+    # The constraint cannot be relaxed to fill the batch, so fewer experiments run.
+    assert (pivot[diverse] < pivot[plain]).all()

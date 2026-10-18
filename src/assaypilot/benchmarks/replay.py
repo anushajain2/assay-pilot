@@ -79,14 +79,16 @@ class ReplayResult:
             return self.frame
         final = self.frame.sort_values("round").groupby(["strategy", "seed"]).tail(1)
         grouped = final.groupby("strategy").agg(
+            best_selected_mean=("best_selected", "mean"),
+            best_selected_sd=("best_selected", "std"),
             best_found_mean=("best_found", "mean"),
             best_found_sd=("best_found", "std"),
+            hits_selected_mean=("hits_selected", "mean"),
             n_hits_mean=("cumulative_hits", "mean"),
-            n_hits_sd=("cumulative_hits", "std"),
             experiments=("cumulative_experiments", "mean"),
             seconds_mean=("seconds", "mean"),
         )
-        return grouped.sort_values("best_found_mean", ascending=False).reset_index()
+        return grouped.sort_values("best_selected_mean", ascending=False).reset_index()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -192,6 +194,7 @@ def replay_campaign(
                 if spec.get("policy") == "diversity" and config.diversity_min_distance
                 else TopRankedPolicy()
             )
+            selected_values: list[float] = []
             random_choose = _random_strategy(rng)
             method_choose = (
                 _method_strategy(spec["method"], sign=sign, policy=policy)
@@ -219,13 +222,22 @@ def replay_campaign(
 
                 revealed = pool.iloc[sorted(observed_index)]
                 batch_values = chosen_rows["value"].to_numpy(dtype=float)
-                best_found = (
-                    float(revealed["value"].max())
-                    if campaign.objective == "maximize"
-                    else float(revealed["value"].min())
-                )
+                selected_values.extend(batch_values.tolist())
+                best = max if campaign.objective == "maximize" else min
+                best_found = float(best(revealed["value"]))
+                # best_found includes the revealed initial set, so it saturates
+                # whenever that set already contained the pool's best variant —
+                # and then every strategy looks identical. best_selected counts
+                # only what the strategy itself chose, which keeps the
+                # comparison informative.
+                best_selected = float(best(selected_values)) if selected_values else float("nan")
                 hits = (
                     int(revealed["value"].map(campaign.is_hit).sum())
+                    if threshold is not None
+                    else 0
+                )
+                selected_hits = (
+                    int(sum(campaign.is_hit(v) for v in selected_values))
                     if threshold is not None
                     else 0
                 )
@@ -240,7 +252,9 @@ def replay_campaign(
                         "batch_best": float(batch_values.max()) if len(batch_values) else np.nan,
                         "batch_mean": float(batch_values.mean()) if len(batch_values) else np.nan,
                         "best_found": best_found,
+                        "best_selected": best_selected,
                         "cumulative_hits": hits,
+                        "hits_selected": selected_hits,
                         "cumulative_experiments": len(observed_index),
                         "seconds": seconds,
                     }
@@ -255,17 +269,23 @@ def replay_campaign(
     return result
 
 
-def compare_strategies(result: ReplayResult, *, reference: str = "random") -> pd.DataFrame:
+def compare_strategies(
+    result: ReplayResult, *, reference: str = "random", metric: str = "best_selected"
+) -> pd.DataFrame:
     """Difference from a reference strategy at the final round, per seed.
 
     Paired by seed, because the seed fixes both the initial observations and
     the pool order: an unpaired comparison would mostly measure that.
+
+    The default metric is ``best_selected`` — the best variant the strategy
+    itself chose. ``best_found`` includes the shared initial set, so it can
+    saturate and hide every difference between strategies.
     """
     frame = result.frame
     if frame.empty:
         return frame
     final = frame.sort_values("round").groupby(["strategy", "seed"]).tail(1)
-    pivot = final.pivot(index="seed", columns="strategy", values="best_found")
+    pivot = final.pivot(index="seed", columns="strategy", values=metric)
     if reference not in pivot.columns:
         raise ValueError(f"no strategy named {reference!r} in this replay")
     rows = []
@@ -277,6 +297,7 @@ def compare_strategies(result: ReplayResult, *, reference: str = "random") -> pd
             {
                 "strategy": strategy,
                 "reference": reference,
+                "metric": metric,
                 "mean_difference": float(np.nanmean(differences)),
                 "sd_difference": float(np.nanstd(differences, ddof=1))
                 if len(differences) > 1

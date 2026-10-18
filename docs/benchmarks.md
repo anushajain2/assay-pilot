@@ -48,11 +48,16 @@ harness.
 
 ### What is reported
 
-Per round and seed: batch best, batch mean, best found so far, cumulative
-discoveries above the predeclared threshold, cumulative experiments, and
-wall-clock seconds. `compare_strategies` pairs strategies **by seed** — the
-seed fixes the initial set, so an unpaired comparison would mostly measure
-which seed got lucky.
+Per round and seed: batch best, batch mean, best found so far, **best among
+the variants the strategy itself selected**, cumulative discoveries above the
+predeclared threshold, cumulative experiments, and wall-clock seconds.
+
+`best_selected` is the one to compare on. `best_found` includes the shared
+initial reveal, so when that set already contains the pool's best variant it
+saturates and every strategy looks identical — which says nothing about the
+strategies. `compare_strategies` defaults to `best_selected` and pairs
+strategies **by seed**, because the seed fixes the initial set and an unpaired
+comparison would mostly measure which seed got lucky.
 
 ### What a replay cannot tell you
 
