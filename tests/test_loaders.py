@@ -273,3 +273,162 @@ def test_report_summary_lines_mention_counts(campaign, simple_measurements):
     measurements = load_measurements(simple_measurements, campaign)
     lines = measurements.report.summary_lines()
     assert "6 of 6 rows usable" in lines[0]
+
+
+# ------------------------------------- transforms, thresholds, and censoring
+
+
+def _log_scale_campaign(campaign, threshold: float):
+    return campaign.__class__.from_dict(
+        {**campaign.to_dict(), "assay_units": "RFU", "success_threshold": threshold}
+    )
+
+
+def test_transform_maps_the_success_threshold_into_value_space(campaign, reference, mutator):
+    """A log-transformed value must not be compared against a raw threshold."""
+    with_threshold = _log_scale_campaign(campaign, 1000.0)
+    rows = [
+        {
+            "variant_id": "a",
+            "sequence": mutator(reference, (3, "G")),
+            "value": 100.0,
+            "condition_id": "37C",
+        },
+        {
+            "variant_id": "b",
+            "sequence": mutator(reference, (5, "W")),
+            "value": 10000.0,
+            "condition_id": "37C",
+        },
+    ]
+    measurements = load_measurements(_frame(with_threshold, rows), with_threshold)
+
+    assert measurements.threshold_in_value_space() == pytest.approx(1000.0)
+    transformed = apply_transform(measurements, "log10")
+    assert transformed.threshold_in_value_space() == pytest.approx(3.0)
+
+    # The hit flags are the same variants before and after the transform.
+    assert list(measurements.is_hit_array(measurements.values)) == [False, True]
+    assert list(transformed.is_hit_array(transformed.values)) == [False, True]
+
+
+def test_transform_renames_the_value_units(campaign, reference, mutator):
+    with_threshold = _log_scale_campaign(campaign, 1000.0)
+    rows = [
+        {
+            "variant_id": "a",
+            "sequence": mutator(reference, (3, "G")),
+            "value": 100.0,
+            "condition_id": "37C",
+        },
+        {
+            "variant_id": "b",
+            "sequence": mutator(reference, (5, "W")),
+            "value": 10000.0,
+            "condition_id": "37C",
+        },
+    ]
+    measurements = load_measurements(_frame(with_threshold, rows), with_threshold)
+    assert measurements.value_units() == "RFU"
+    assert apply_transform(measurements, "log10").value_units() == "log10(RFU)"
+    assert apply_transform(measurements, "zscore").value_units() == "z-score of RFU"
+
+
+def test_a_threshold_a_transform_cannot_express_yields_no_hits(campaign, reference, mutator):
+    """A non-positive threshold under a log transform disables hit rates, not lies."""
+    with_threshold = _log_scale_campaign(campaign, -5.0)
+    rows = [
+        {
+            "variant_id": "a",
+            "sequence": mutator(reference, (3, "G")),
+            "value": 100.0,
+            "condition_id": "37C",
+        },
+        {
+            "variant_id": "b",
+            "sequence": mutator(reference, (5, "W")),
+            "value": 10000.0,
+            "condition_id": "37C",
+        },
+    ]
+    measurements = apply_transform(
+        load_measurements(_frame(with_threshold, rows), with_threshold), "log10"
+    )
+    assert measurements.threshold_in_value_space() is None
+    assert measurements.is_hit_array(measurements.values) is None
+
+
+def test_zscore_threshold_follows_the_same_scaling(campaign, reference, mutator):
+    with_threshold = _log_scale_campaign(campaign, 3.0)
+    rows = [
+        {
+            "variant_id": f"v{i}",
+            "sequence": mutator(reference, (3 + i, "G")),
+            "value": float(i),
+            "condition_id": "37C",
+        }
+        for i in range(1, 6)
+    ]
+    measurements = load_measurements(_frame(with_threshold, rows), with_threshold)
+    transformed = apply_transform(measurements, "zscore")
+
+    raw_hits = list(measurements.is_hit_array(measurements.values))
+    transformed_hits = list(transformed.is_hit_array(transformed.values))
+    assert raw_hits == transformed_hits
+
+
+def test_for_regression_records_every_dropped_row(campaign, reference, mutator):
+    """Rows removed before fitting must appear in the exclusions, not only in a note."""
+    rows = [
+        {
+            "variant_id": "a",
+            "sequence": mutator(reference, (3, "G")),
+            "value": "<0.05",
+            "condition_id": "37C",
+        },
+        {
+            "variant_id": "b",
+            "sequence": mutator(reference, (5, "W")),
+            "value": "2.0",
+            "condition_id": "37C",
+        },
+        {
+            "variant_id": "c",
+            "sequence": mutator(reference, (7, "D")),
+            "value": ">9.0",
+            "condition_id": "37C",
+        },
+    ]
+    measurements = load_measurements(_frame(campaign, rows), campaign)
+    fitting = measurements.for_regression()
+
+    assert len(fitting) == 1
+    codes = fitting.report.counts_by_code()
+    assert codes[ExclusionCode.CENSORED_VALUE] == 2
+
+    censored = [e for e in fitting.report.exclusions if e.code == ExclusionCode.CENSORED_VALUE]
+    assert {e.identifier for e in censored} == {"a", "c"}
+    assert all(e.row is not None for e in censored)
+    assert "below a limit" in censored[0].detail
+
+
+def test_for_regression_is_idempotent(campaign, reference, mutator):
+    rows = [
+        {
+            "variant_id": "a",
+            "sequence": mutator(reference, (3, "G")),
+            "value": "<0.05",
+            "condition_id": "37C",
+        },
+        {
+            "variant_id": "b",
+            "sequence": mutator(reference, (5, "W")),
+            "value": "2.0",
+            "condition_id": "37C",
+        },
+    ]
+    measurements = load_measurements(_frame(campaign, rows), campaign)
+    once = measurements.for_regression()
+    twice = once.for_regression()
+    assert len(twice) == len(once)
+    assert twice.report.counts_by_code() == once.report.counts_by_code()

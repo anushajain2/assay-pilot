@@ -53,6 +53,13 @@ keeping the original in `value_raw`. The transformation is recorded in the
 manifest and named in the report. A log transform on zero or negative values is
 refused rather than silently offset.
 
+The campaign's `success_threshold` stays on the scale you declared it in, and
+is mapped through the same transform wherever a hit is counted — so the same
+variants are hits before and after. If the transform cannot express the
+threshold (a non-positive threshold under a log), no hit rate is reported and
+the report says why. Exported predictions are labelled in the transformed
+space; AssayPilot does not back-transform them.
+
 ---
 
 ## Candidates
@@ -121,8 +128,8 @@ batch never spends two wells on the same construct.
 | `selection_rank` | 1 = first chosen. |
 | `sequence`, `mutations`, `n_substitutions` | The construct. |
 | `score` | The method's ranking value (higher = better under the campaign objective). Scale may be arbitrary. |
-| `predicted_value` | The score expressed in assay units. **Empty** for methods that produce only a score. |
-| `predicted_value_units` | Units of `predicted_value`, empty when there is none. |
+| `predicted_value` | The score expressed in the value space the model was fitted in. **Empty** for methods that produce only a score. |
+| `predicted_value_units` | Units of `predicted_value`, empty when there is none. After a transform this names the transformed space — `log10(RFU)`, not `RFU` — because the prediction is not a number of raw units. |
 | `observed_value` | Measured value, filled only if this sequence has already been measured. |
 | `min_distance_to_measured` | Substitutions from the nearest measured variant. |
 | `n_unseen_substitutions` | Substitutions never seen in any measurement. |

@@ -52,33 +52,33 @@ def assess_coverage(
     candidates: CandidateSet,
     measurements: MeasurementSet,
     *,
-    evaluated_sequences: Sequence[str] | None = None,
-    training_sequences: Sequence[str] | None = None,
+    evaluated_distances: Sequence[int] | None = None,
 ) -> CoverageReport:
     """Compare the candidate pool with the variants the evaluation actually covered.
 
     Parameters
     ----------
-    evaluated_sequences:
-        The held-out sequences the reported metrics were computed on. Their
-        distance from the training set defines the region the evidence covers.
-    training_sequences:
-        The sequences the final model is fitted on. Defaults to every measured
-        sequence.
+    evaluated_distances:
+        How far each held-out sequence was from the training set **of its own
+        split** (see
+        :func:`~assaypilot.pipeline._evaluated_distances`). The largest of
+        these is the furthest the evidence reaches. Computing the distances
+        against a pooled training set would be wrong: with more than one split
+        the same sequence is held out in one and trained on in another, so its
+        distance would come out as zero and the evidence would look far
+        narrower than it is.
+
+    Candidate distances and substitution novelty are measured against **every**
+    measured sequence, because that is what the final model is fitted on and
+    what "never appears in the measurements" means to the reader.
     """
     reference = candidates.campaign.reference_sequence
     measured = measurements.frame["sequence"].tolist()
-    training = list(training_sequences) if training_sequences is not None else measured
-    known_substitutions = _substitution_set(reference, training)
+    known_substitutions = _substitution_set(reference, measured)
+    training = measured
 
-    if evaluated_sequences:
-        evaluated_distances = np.array(
-            [min_distance_to_set(seq, training) for seq in evaluated_sequences], dtype=float
-        )
-    else:
-        evaluated_distances = np.array([], dtype=float)
-
-    max_evaluated = float(evaluated_distances.max()) if evaluated_distances.size else float("nan")
+    distances_array = np.asarray(list(evaluated_distances or []), dtype=float)
+    max_evaluated = float(distances_array.max()) if distances_array.size else float("nan")
 
     rows: list[dict[str, Any]] = []
     for _, candidate in candidates.frame.iterrows():
@@ -115,7 +115,7 @@ def assess_coverage(
         "n_candidates": int(len(frame)),
         "max_evaluated_distance": None if np.isnan(max_evaluated) else max_evaluated,
         "evaluated_distance_median": (
-            float(np.median(evaluated_distances)) if evaluated_distances.size else None
+            float(np.median(distances_array)) if distances_array.size else None
         ),
     }
 

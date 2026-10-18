@@ -166,14 +166,26 @@ def score_round(
         )
         metrics["mean_observed"] = float(matched["measured_value"].mean())
 
-        if campaign.success_threshold is not None:
-            hits = matched["measured_value"].map(campaign.is_hit)
-            metrics["n_hits"] = int(hits.sum())
-            metrics["hit_rate"] = float(hits.mean())
-        else:
+        # The threshold is mapped into whatever value space the new round was
+        # loaded in, so a transformed round is not compared against a raw
+        # threshold.
+        hit_flags = new_measurements.is_hit_array(matched["measured_value"].to_numpy(dtype=float))
+        if hit_flags is not None:
+            metrics["n_hits"] = int(hit_flags.sum())
+            metrics["hit_rate"] = float(hit_flags.mean())
+            metrics["threshold_used"] = new_measurements.threshold_in_value_space()
+            metrics["threshold_space"] = new_measurements.value_units()
+        elif campaign.success_threshold is None:
             notes.append(
                 "No success threshold is defined for this campaign, so no hit rate is"
                 " reported. Define one before the next round if you want that number."
+            )
+        else:
+            notes.append(
+                f"The success threshold ({campaign.success_threshold:g}"
+                f" {campaign.assay_units}) cannot be expressed on the"
+                f" {new_measurements.transform}-transformed scale these measurements use,"
+                " so no hit rate is reported."
             )
 
         if previous_measurements is not None and not previous_measurements.frame.empty:

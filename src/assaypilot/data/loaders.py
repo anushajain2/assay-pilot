@@ -193,9 +193,14 @@ class MeasurementSet:
         return frame.loc[usable].reset_index(drop=True)
 
     def for_regression(self) -> MeasurementSet:
-        """A copy restricted to rows usable for fitting (see :meth:`regression_frame`)."""
+        """A copy restricted to rows usable for fitting (see :meth:`regression_frame`).
+
+        Every row this removes is recorded as an exclusion, with its source row
+        number, so it appears in ``exclusions.csv`` like any other. A note alone
+        would leave those rows invisible in the exported record.
+        """
         regression = self.regression_frame()
-        dropped = len(self.frame) - len(regression)
+        kept = set(regression["source_row"].tolist())
         report = ValidationReport(
             source=self.report.source,
             n_rows_read=self.report.n_rows_read,
@@ -204,12 +209,80 @@ class MeasurementSet:
             notes=list(self.report.notes),
             stats=dict(self.report.stats),
         )
-        if dropped:
+
+        dropped = self.frame[~self.frame["source_row"].isin(kept)]
+        for row in dropped.itertuples(index=False):
+            if row.censoring != "none":
+                direction = "below" if row.censoring == "left" else "above"
+                detail = (
+                    f"value reported as {direction} a limit of {row.value:g}; kept in the data"
+                    " and excluded from model fitting in version one rather than being"
+                    " treated as exact"
+                )
+                code = ExclusionCode.CENSORED_VALUE
+            else:
+                detail = "value is not finite, so it cannot be used for fitting"
+                code = ExclusionCode.NON_NUMERIC_VALUE
+            report.add(code, row.variant_id, detail, row=int(row.source_row), severity="excluded")
+
+        if len(dropped):
             report.note(
-                f"{dropped} censored or non-finite measurement(s) kept in the data but excluded"
-                " from model fitting in version one"
+                f"{len(dropped)} censored or non-finite measurement(s) kept in the data but"
+                " excluded from model fitting in version one"
             )
         return replace(self, frame=regression, report=report)
+
+    def threshold_in_value_space(self) -> float | None:
+        """The campaign's success threshold, mapped through the applied transform.
+
+        ``value`` may have been log-transformed or z-scored while
+        ``campaign.success_threshold`` stays on the scale the researcher
+        declared it in. Comparing the two directly would silently redefine what
+        a hit is, so every hit test goes through this.
+
+        Returns ``None`` when no threshold was declared, or when the transform
+        is undefined at the threshold (a non-positive threshold under a log
+        transform) — in which case no hit rate is reported at all.
+        """
+        threshold = self.campaign.success_threshold
+        if threshold is None:
+            return None
+        kind = self.transform
+        if kind == "none":
+            return float(threshold)
+        if kind in {"log10", "log2", "ln"}:
+            if threshold <= 0:
+                return None
+            base = {"log10": np.log10, "log2": np.log2, "ln": np.log}[kind]
+            return float(base(threshold))
+        if kind == "zscore":
+            mean = float(self.transform_detail.get("mean", 0.0))
+            std = float(self.transform_detail.get("std", 1.0))
+            return float((threshold - mean) / std) if std else None
+        return float(threshold)  # pragma: no cover - guarded by the Transform literal
+
+    def value_units(self) -> str:
+        """Units of ``value`` after any transform, for labelling exports.
+
+        An exported ``predicted_value`` of 3.41 on a log10 scale is not 3.41
+        RFU, so the column is labelled ``log10(RFU)`` rather than ``RFU``.
+        """
+        units = self.campaign.assay_units
+        if self.transform == "none":
+            return units
+        if self.transform == "zscore":
+            return f"z-score of {units}"
+        return f"{self.transform}({units})"
+
+    def is_hit_array(self, values: Sequence[float]) -> np.ndarray | None:
+        """Hit flags for values in this set's value space, or ``None`` with no threshold."""
+        threshold = self.threshold_in_value_space()
+        if threshold is None:
+            return None
+        array = np.asarray(values, dtype=float)
+        if self.campaign.objective == "maximize":
+            return array >= threshold
+        return array <= threshold
 
     def replicate_summary(self) -> pd.DataFrame:
         """Per-sequence replicate counts and spread, for the data review screen."""

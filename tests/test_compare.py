@@ -242,3 +242,88 @@ def test_evaluate_requires_methods_and_splits(campaign):
         evaluate_methods(
             [ConstantMethod("simple", 1, lambda s: 0.0)], measurements, plan, campaign=campaign
         )
+
+
+def _threshold_campaign(campaign, threshold: float):
+    return campaign.__class__.from_dict({**campaign.to_dict(), "success_threshold": threshold})
+
+
+def test_a_backwards_method_is_never_supported_under_a_hit_rate_metric(campaign):
+    """The better-than-chance gate must apply to whichever metric drove the decision.
+
+    With a success threshold the primary metric is hit rate, and a method that
+    orders variants perfectly backwards must not be reported as supported.
+    """
+    measurements = _measurements_with_rounds(campaign, n=120, seed=3)
+    with_threshold = _threshold_campaign(campaign, 1.0)
+    plan = choose_split_plan(measurements)
+    truth = dict(zip(measurements.frame["sequence"], measurements.frame["value"], strict=True))
+
+    backwards = ConstantMethod("backwards", 1, lambda s: -truth[s])
+    result = evaluate_methods(
+        [backwards],
+        measurements,
+        plan,
+        campaign=with_threshold,
+        k=5,
+        n_bootstrap=50,
+        seed=0,
+    )
+
+    assert result.primary_metric == "hit_rate_at_k"
+    assert result.summaries["backwards"].mean("spearman") < 0
+    assert result.recommendation.evidence_level == "exploratory"
+    assert any("did not beat chance" in reason for reason in result.recommendation.reasons)
+
+
+def test_chance_level_for_hit_rate_is_the_random_reference(campaign):
+    measurements = _measurements_with_rounds(campaign, n=120, seed=4)
+    with_threshold = _threshold_campaign(campaign, 1.0)
+    plan = choose_split_plan(measurements)
+    truth = dict(zip(measurements.frame["sequence"], measurements.frame["value"], strict=True))
+
+    oracle = ConstantMethod("oracle", 1, lambda s: truth[s])
+    result = evaluate_methods(
+        [oracle], measurements, plan, campaign=with_threshold, k=5, n_bootstrap=50, seed=0
+    )
+    assert (
+        result.summaries["oracle"].mean("hit_rate_at_k") > result.random_reference["hit_rate_at_k"]
+    )
+    assert result.recommendation.evidence_level == "supported"
+
+
+def test_every_split_is_scored_at_the_same_budget(campaign):
+    """Averaging metrics computed at different k would average different quantities."""
+    import pandas as pd
+
+    rng = np.random.default_rng(0)
+    reference = campaign.reference_sequence
+    positions = [3, 5, 7, 9, 11, 13, 15, 17]
+    rows = []
+    # Deliberately uneven rounds: 20, 10, then 40 measurements.
+    for round_name, count in (("R1", 20), ("R2", 10), ("R3", 40)):
+        for _ in range(count):
+            residues = list(reference)
+            for position in rng.choice(positions, size=2, replace=False):
+                residues[position - 1] = str(rng.choice(list("ACDEFGHIKLMNPQRSTVWY")))
+            rows.append(
+                {
+                    "variant_id": f"v{len(rows):03d}",
+                    "sequence": "".join(residues),
+                    "value": float(rng.normal()),
+                    "condition_id": campaign.condition_id,
+                    "round_id": round_name,
+                }
+            )
+    measurements = load_measurements(pd.DataFrame(rows), campaign, strict=False)
+    plan = choose_split_plan(measurements)
+    assert len({s.n_test for s in plan.splits}) > 1, "the splits must differ in size"
+
+    truth = dict(zip(measurements.frame["sequence"], measurements.frame["value"], strict=True))
+    method = ConstantMethod("m", 1, lambda s: truth[s])
+    result = evaluate_methods(
+        [method], measurements, plan, campaign=campaign, k=24, n_bootstrap=20, seed=0
+    )
+
+    budgets = {m.k for m in result.summaries["m"].per_split.values()}
+    assert budgets == {result.k}, f"splits scored at different budgets: {budgets}"

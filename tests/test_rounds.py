@@ -194,3 +194,48 @@ def test_list_campaigns_counts_rounds_and_runs(tmp_path, planned):
         assert row["campaign_id"] == campaign.campaign_id
         assert row["n_runs"] == 1
         assert row["n_measurements"] == len(measurements)
+
+
+def test_store_preserves_censoring_across_a_round_trip(tmp_path, campaign, reference):
+    """A detection limit must not become an exact measurement by being stored."""
+    from assaypilot.data.loaders import load_measurements as load
+
+    def mutate(position: str, residue: str) -> str:
+        residues = list(reference)
+        residues[int(position) - 1] = residue
+        return "".join(residues)
+
+    rows = pd.DataFrame(
+        [
+            {
+                "variant_id": "v1",
+                "sequence": mutate("3", "G"),
+                "value": "<0.01",
+                "condition_id": "37C",
+            },
+            {
+                "variant_id": "v2",
+                "sequence": mutate("5", "W"),
+                "value": "2.5",
+                "condition_id": "37C",
+            },
+            {
+                "variant_id": "v3",
+                "sequence": mutate("7", "D"),
+                "value": ">9.9",
+                "condition_id": "37C",
+            },
+        ]
+    )
+    measurements = load(rows, campaign, strict=True)
+    assert list(measurements.frame["censoring"]) == ["left", "none", "right"]
+
+    with CampaignStore(tmp_path / "campaigns.db") as store:
+        store.create_campaign(campaign)
+        store.add_round(campaign.campaign_id, measurements, round_id="R1")
+        restored = store.load_measurements(campaign.campaign_id)
+
+    assert list(restored.frame["censoring"]) == ["left", "none", "right"]
+    assert list(restored.frame["value"]) == [0.01, 2.5, 9.9]
+    # And the censored rows are still kept out of fitting after the round trip.
+    assert len(restored.for_regression()) == 1

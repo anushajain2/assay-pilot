@@ -324,11 +324,19 @@ def mutation_pattern_splits(
 def random_group_splits(
     measurements: MeasurementSet, *, n_splits: int = 5, seed: int = 0
 ) -> list[Split]:
-    """Grouped K-fold over sequences: the interpolation diagnostic."""
+    """Grouped K-fold over sequences: the interpolation diagnostic.
+
+    The fold count is reduced until each fold can hold at least
+    ``MIN_TEST_SEQUENCES`` sequences. Asking for five folds from twenty
+    sequences would otherwise produce folds of four, every one of them below
+    the minimum every other split builder enforces — and they would be dropped
+    one by one, leaving a plan whose reported number of splits did not match
+    the number that contributed.
+    """
     frame = measurements.frame
     groups = frame["seq_hash"].to_numpy()
     unique = np.unique(groups)
-    n_splits = int(min(n_splits, len(unique)))
+    n_splits = int(min(n_splits, len(unique) // MIN_TEST_SEQUENCES))
     if n_splits < 2 or len(unique) < MIN_TRAIN_SEQUENCES + MIN_TEST_SEQUENCES:
         return []
 
@@ -344,7 +352,7 @@ def random_group_splits(
         train_index = np.flatnonzero(fold_of_row != fold)
         if (
             _group_sizes(frame, train_index) < MIN_TRAIN_SEQUENCES
-            or _group_sizes(frame, test_index) < 2
+            or _group_sizes(frame, test_index) < MIN_TEST_SEQUENCES
         ):
             continue
         _check_no_group_overlap(frame, train_index, test_index)

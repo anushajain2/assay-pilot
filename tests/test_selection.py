@@ -173,12 +173,8 @@ def test_coverage_flags_candidates_beyond_the_evaluated_region(campaign, referen
     far = mutator(reference, (7, "D"), (9, "K"), (11, "R"), (13, "E"), (15, "Q"))
     candidates = _candidates(campaign, [near, far])
 
-    report = assess_coverage(
-        candidates,
-        measurements,
-        evaluated_sequences=[mutator(reference, (3, "G"), (5, "W"))],
-        training_sequences=measured,
-    )
+    # The evaluation reached variants one substitution beyond its training set.
+    report = assess_coverage(candidates, measurements, evaluated_distances=[1])
     frame = report.frame.set_index("candidate_id")
     assert bool(frame.loc["c1", "within_evaluated_range"]) is True
     assert bool(frame.loc["c2", "within_evaluated_range"]) is False

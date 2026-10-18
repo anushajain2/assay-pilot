@@ -158,3 +158,47 @@ def test_split_plan_serialises_partitions(campaign):
     data = plan.to_dict()
     assert data["kind"] == "round"
     assert all("train_index" in s and "test_index" in s for s in data["splits"])
+
+
+def _n_sequences(campaign, count: int, seed: int = 0):
+    """``count`` distinct single-substitution variants, one measurement each."""
+    rng = np.random.default_rng(seed)
+    reference = campaign.reference_sequence
+    rows = []
+    seen = set()
+    while len(rows) < count:
+        residues = list(reference)
+        position = int(rng.integers(1, len(reference)))
+        residues[position - 1] = str(rng.choice(list("ACDEFGHIKLMNPQRSTVWY")))
+        sequence = "".join(residues)
+        if sequence in seen or sequence == reference:
+            continue
+        seen.add(sequence)
+        rows.append(
+            {
+                "variant_id": f"s{len(rows):03d}",
+                "sequence": sequence,
+                "value": float(rng.normal()),
+                "condition_id": campaign.condition_id,
+            }
+        )
+    return load_measurements(pd.DataFrame(rows), campaign, strict=False)
+
+
+def test_random_folds_respect_the_shared_minimum_size(campaign):
+    """Every builder enforces MIN_TEST_SEQUENCES; the random one is not an exception."""
+    from assaypilot.evaluation.splits import MIN_TEST_SEQUENCES
+
+    measurements = _n_sequences(campaign, 20)
+    splits = random_group_splits(measurements, n_splits=5)
+    assert splits, "20 sequences should still support a random split"
+    assert all(s.n_test >= MIN_TEST_SEQUENCES for s in splits)
+
+
+def test_every_requested_random_fold_is_returned(campaign):
+    """The number of splits reported must be the number that actually contributed."""
+    measurements = _n_sequences(campaign, 40)
+    splits = random_group_splits(measurements, n_splits=5)
+    folds = {s.details["fold"] for s in splits}
+    assert len(splits) == len(folds)
+    assert all(s.details["n_folds"] == len(splits) for s in splits)

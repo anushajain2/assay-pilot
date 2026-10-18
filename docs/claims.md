@@ -103,14 +103,20 @@ verbatim in the report and stored in the manifest.
 
 **Claimed.** A plan is labelled `supported` only when the split was an
 extrapolation protocol, at least 20 distinct held-out sequences were available,
-and the chosen method ordered them better than chance. Otherwise it is
+and the chosen method beat chance **on the metric that drove the decision** —
+zero for a rank correlation, and what random selection achieved on the same
+held-out set for a hit rate. Otherwise it is
 `exploratory`, in the report, the exports (`evidence_level` column), and the
 manifest.
 
-**Enforced by.** `MIN_TEST_SEQUENCES_FOR_SUPPORT` and the evidence checks in
-`_decide`.
+**Enforced by.** `MIN_TEST_SEQUENCES_FOR_SUPPORT`, `_chance_level`, and the
+evidence checks in `_decide`. Every split is scored at the same budget `k`, so
+the averaged metric is one quantity rather than a mixture, and the "is the top
+batch a large share of the held-out set?" guard is applied to the smallest
+split rather than to a pooled row count.
 
-**Tested by.** `tests/test_compare.py`, `tests/test_pipeline.py`.
+**Tested by.** `tests/test_compare.py::test_a_backwards_method_is_never_supported_under_a_hit_rate_metric`,
+`::test_every_split_is_scored_at_the_same_budget`, `tests/test_pipeline.py`.
 
 ---
 
@@ -153,13 +159,18 @@ the report; the pipeline only fills `predicted_value` for label-using methods.
 
 **Claimed.** For every candidate, AssayPilot reports its distance to the nearest
 measured variant, how many of its substitutions have never been measured, and
-whether it lies inside the region the evaluation covered.
+whether it lies inside the region the evaluation covered. "The region the
+evaluation covered" is measured per split, against that split's own training
+set: pooling training rows across splits would put a sequence on both sides and
+make the covered region look far narrower than it is.
 
 **Not claimed.** That the reported metrics apply to candidates outside that
 region. Those candidates are flagged, and `--restrict-to-evaluated` removes them
 from selection.
 
-**Tested by.** `tests/test_selection.py::test_coverage_flags_candidates_beyond_the_evaluated_region`.
+**Tested by.** `tests/test_selection.py::test_coverage_flags_candidates_beyond_the_evaluated_region`,
+`tests/test_pipeline.py::test_coverage_is_measured_against_each_split_s_own_training_set`,
+`::test_unseen_substitutions_are_counted_against_all_measurements`.
 
 ---
 
@@ -170,10 +181,39 @@ reason, and its source row number, and is exported in `exclusions.csv`. Mutation
 notation whose stated wild-type residue does not match the reference is an
 error, never renumbered. Outliers are never removed on the tool's initiative.
 Censored values are kept in the data and excluded from regression, not treated
-as exact.
+as exact — including after a round trip through the campaign store, and
+whichever entry point is used, since `plan_batch` removes them itself rather
+than trusting the caller to. Each removed row is recorded as a
+`censored_value` exclusion with its source row, not merely summarised in a
+note.
 
-**Tested by.** `tests/test_loaders.py` (whole module),
-`tests/test_sequences.py::test_parse_mutation_string_rejects_wrong_wildtype`.
+**Tested by.** `tests/test_loaders.py` (whole module, including
+`::test_for_regression_records_every_dropped_row`),
+`tests/test_sequences.py::test_parse_mutation_string_rejects_wrong_wildtype`,
+`tests/test_pipeline.py::test_censored_measurements_never_reach_the_model`,
+`tests/test_rounds.py::test_store_preserves_censoring_across_a_round_trip`.
+
+---
+
+## 10a. A transform moves the threshold and the units with it
+
+**Claimed.** When values are transformed, the campaign's success threshold is
+mapped through the same transform before any hit is counted, and exported
+predictions are labelled in the transformed space (`log10(RFU)`, not `RFU`).
+
+**Not claimed.** That a transformed prediction can be read as a raw assay
+value. AssayPilot does not back-transform predictions, because the honest
+retransformation depends on assumptions it has not checked.
+
+**Enforced by.** `MeasurementSet.threshold_in_value_space`,
+`MeasurementSet.value_units`, and `MeasurementSet.is_hit_array`; the evaluation
+and the round scorecard both go through them. A threshold the transform cannot
+express — a non-positive threshold under a log — disables hit rates and says
+so, rather than producing zero hits.
+
+**Tested by.** `tests/test_loaders.py::test_transform_maps_the_success_threshold_into_value_space`,
+`::test_a_threshold_a_transform_cannot_express_yields_no_hits`,
+`tests/test_pipeline.py::test_predicted_values_are_labelled_with_the_transformed_units`.
 
 ---
 

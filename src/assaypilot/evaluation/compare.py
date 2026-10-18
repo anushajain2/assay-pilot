@@ -216,12 +216,20 @@ class EvaluationResult:
         }
 
 
-def _hits_for(campaign: Campaign, values: np.ndarray) -> np.ndarray | None:
-    """Hit flags in desirability space, or ``None`` when no threshold was declared."""
-    if campaign.success_threshold is None:
+def _hits_for(
+    campaign: Campaign, values: np.ndarray, *, threshold: float | None
+) -> np.ndarray | None:
+    """Hit flags in desirability space, or ``None`` when no threshold applies.
+
+    ``threshold`` is the campaign threshold already mapped into the value space
+    the measurements are in (see
+    :meth:`~assaypilot.data.loaders.MeasurementSet.threshold_in_value_space`),
+    because a log-transformed measurement must not be compared against a raw
+    threshold.
+    """
+    if threshold is None:
         return None
-    threshold = campaign.sign * campaign.success_threshold
-    return np.asarray(values, dtype=float) >= threshold
+    return np.asarray(values, dtype=float) >= campaign.sign * threshold
 
 
 def _fit_and_predict(
@@ -335,6 +343,20 @@ def _paired_comparisons(
     return comparisons
 
 
+def _chance_level(primary_metric: str, random_reference: dict[str, float]) -> float:
+    """The value the primary metric would take without a useful model.
+
+    Zero for a rank correlation; for the decision-shaped metrics it is what
+    random selection of the same number of variants achieved on the same
+    held-out set. Returns ``nan`` when no reference is available, in which case
+    the caller makes no claim either way.
+    """
+    if primary_metric == "spearman":
+        return 0.0
+    reference = random_reference.get(primary_metric, float("nan"))
+    return float(reference)
+
+
 def _decide(
     *,
     summaries: dict[str, MethodSummary],
@@ -343,6 +365,7 @@ def _decide(
     primary_metric: str,
     split_plan: SplitPlan,
     n_test_groups: int,
+    random_reference: dict[str, float],
 ) -> Recommendation:
     """Apply the stated selection rule and set the evidence level."""
     rule = (
@@ -395,13 +418,20 @@ def _decide(
             f"The primary metric ({HUMAN_NAMES.get(primary_metric, primary_metric)}) could not"
             " be computed for the selected method."
         )
-    elif primary_metric == "spearman" and primary_value <= 0:
-        evidence = "exploratory"
-        reasons.append(
-            "The selected method did not order held-out variants better than chance"
-            f" (rank correlation {primary_value:.3f}). Treat the resulting batch as"
-            " exploratory."
-        )
+    else:
+        # "Better than chance" means something different for each metric, and the
+        # check has to run for whichever one drove the decision: a campaign with a
+        # success threshold uses hit rate, and skipping the check there would let a
+        # method that orders variants backwards be reported as supported.
+        chance = _chance_level(primary_metric, random_reference)
+        if np.isfinite(chance) and primary_value <= chance:
+            evidence = "exploratory"
+            reasons.append(
+                "The selected method did not beat chance on the primary metric"
+                f" ({HUMAN_NAMES.get(primary_metric, primary_metric)}"
+                f" {primary_value:.3f} against a chance level of {chance:.3f}),"
+                " so the resulting batch is exploratory."
+            )
 
     return Recommendation(
         method_key=incumbent,
@@ -437,17 +467,27 @@ def evaluate_methods(
 
     sign = campaign.sign
     batch_size = k if k is not None else campaign.selection.batch_size
+    # The threshold is mapped into the measurements' value space once, so a
+    # transformed assay cannot silently redefine what counts as a hit.
+    threshold = measurements.threshold_in_value_space()
 
     ordered = sorted(methods, key=lambda m: (m.info.complexity, m.info.key))
     ordered_keys = [m.info.key for m in ordered]
 
     # The primary metric and the evaluation budget are fixed before any model is
     # fitted, so that no choice here can depend on the results it will judge.
-    n_test_rows = sum(s.n_test for s in split_plan.splits)
+    #
+    # One budget is used for every split. Scoring a 10-row fold at k=10 and a
+    # 40-row fold at k=24 and then averaging would produce a mean of two
+    # different quantities, labelled with whichever k happened to be smaller.
     k_used = int(min([batch_size] + [max(1, s.n_test) for s in split_plan.splits]))
+    # The "is the top batch a large share of the held-out set?" guard has to be
+    # checked per split: a pooled row count across splits can clear the bar
+    # while every individual fold is almost entirely top-batch.
+    smallest_test = min(s.n_test for s in split_plan.splits)
     primary_metric = choose_primary_metric(
-        has_threshold=campaign.success_threshold is not None,
-        n_test=n_test_rows,
+        has_threshold=threshold is not None,
+        n_test=smallest_test,
         k=k_used,
     )
 
@@ -460,14 +500,13 @@ def evaluate_methods(
 
     for split in split_plan.splits:
         split_predictions: dict[str, SplitPrediction] = {}
-        k_split = int(min(batch_size, max(1, split.n_test)))
 
         for method in ordered:
             y_true, y_pred, groups, details = _fit_and_predict(
                 method, measurements, split, sign=sign
             )
-            is_hit = _hits_for(campaign, y_true)
-            metrics = compute_metrics(y_true, y_pred, k=k_split, is_hit=is_hit)
+            is_hit = _hits_for(campaign, y_true, threshold=threshold)
+            metrics = compute_metrics(y_true, y_pred, k=k_used, is_hit=is_hit)
             prediction = SplitPrediction(
                 split_name=split.name,
                 method_key=method.info.key,
@@ -489,7 +528,7 @@ def evaluate_methods(
         random_refs.append(
             random_reference(
                 reference.y_true,
-                k_split,
+                k_used,
                 is_hit=reference.is_hit,
                 # crc32, not hash(): str hashing is salted per process, which
                 # would make the random reference irreproducible.
@@ -501,7 +540,7 @@ def evaluate_methods(
             _bootstrap_metric_samples(
                 split_predictions,
                 metric=primary_metric,
-                k=k_split,
+                k=k_used,
                 n_bootstrap=n_bootstrap,
                 seed=seed,
             )
@@ -551,6 +590,13 @@ def evaluate_methods(
                 (comparison.method_key, comparison.reference_key), comparison
             )
 
+    pooled_random: dict[str, float] = {}
+    for metric in ("best_at_k", "mean_at_k", "hit_rate_at_k"):
+        values = np.array([ref[metric] for ref in random_refs], dtype=float)
+        finite = values[np.isfinite(values)]
+        # hit_rate is nan throughout when no success threshold was declared.
+        pooled_random[metric] = float(finite.mean()) if finite.size else float("nan")
+
     recommendation = _decide(
         summaries=summaries,
         ordered_keys=ordered_keys,
@@ -558,14 +604,8 @@ def evaluate_methods(
         primary_metric=primary_metric,
         split_plan=split_plan,
         n_test_groups=len(test_groups),
+        random_reference=pooled_random,
     )
-
-    pooled_random: dict[str, float] = {}
-    for metric in ("best_at_k", "mean_at_k", "hit_rate_at_k"):
-        values = np.array([ref[metric] for ref in random_refs], dtype=float)
-        finite = values[np.isfinite(values)]
-        # hit_rate is nan throughout when no success threshold was declared.
-        pooled_random[metric] = float(finite.mean()) if finite.size else float("nan")
 
     return EvaluationResult(
         campaign=campaign,

@@ -355,6 +355,17 @@ class CampaignStore:
                 campaign,
                 strict=True,
             )
+
+        # The loader re-parses the `value` column, so a censored value has to be
+        # written back in its censoring notation first. Handing it the bare
+        # number would turn "below the detection limit" into an exact
+        # measurement on every round trip through the store.
+        frame = frame.copy()
+        prefix = {"left": "<", "right": ">", "none": ""}
+        frame["value"] = [
+            f"{prefix.get(str(censoring), '')}{value}"
+            for censoring, value in zip(frame["censoring"], frame["value"], strict=True)
+        ]
         return load_measurements(frame, campaign, strict=False)
 
     # ----------------------------------------------------------------------- runs

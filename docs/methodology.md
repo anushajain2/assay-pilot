@@ -123,9 +123,13 @@ All are reported next to a **random reference** — the expectation of picking *
 at random from the same held-out set — so a positive-looking number can be
 compared against doing nothing clever.
 
-The primary metric (hit rate when a threshold exists and the held-out set is at
-least twice the batch size; otherwise rank correlation) is fixed **before any
-model is fitted**, so the choice cannot follow the results.
+The primary metric (hit rate when a threshold exists and the **smallest** split
+is at least twice the batch size; otherwise rank correlation) is fixed **before
+any model is fitted**, so the choice cannot follow the results. The smallest
+split governs, because a pooled row count can clear the bar while every
+individual fold is almost entirely top-batch — which makes the hit rate nearly
+constant by construction. Every split is also scored at the same budget `k`, so
+the average across splits is one quantity rather than a mixture of two.
 
 ---
 
@@ -157,7 +161,8 @@ Consequences, all intended:
 - the reasons are recorded as sentences, not just numbers.
 
 **Evidence levels.** `supported` requires an extrapolation split, ≥20 distinct
-held-out sequences, and better-than-chance ordering. Anything else is
+held-out sequences, and beating chance on whichever metric drove the decision —
+zero for a rank correlation, and the random-selection reference for a hit rate. Anything else is
 `exploratory`. With no measurements at all, the level is `none` and the ranking
 is label-free.
 

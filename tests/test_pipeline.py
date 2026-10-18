@@ -262,3 +262,101 @@ def test_headline_names_method_policy_and_evidence(simulated_inputs, physchem_su
     assert plan.method_name in headline
     assert plan.outcome.policy in headline
     assert "candidates selected" in headline
+
+
+def test_censored_measurements_never_reach_the_model(simulated_inputs, physchem_suite):
+    """plan_batch excludes them itself, so every caller is protected, not just the CLI."""
+    import pandas as pd
+
+    campaign, measurements, candidates = simulated_inputs
+    frame = measurements.frame.copy()
+    censored_ids = frame["variant_id"].tolist()[:10]
+    raw = pd.DataFrame(
+        {
+            "variant_id": frame["variant_id"],
+            "sequence": frame["sequence"],
+            "value": [
+                f"<{abs(v):.3f}" if vid in censored_ids else f"{v}"
+                for vid, v in zip(frame["variant_id"], frame["value"], strict=True)
+            ],
+            "condition_id": frame["condition_id"],
+            "round_id": frame["round_id"],
+        }
+    )
+    from assaypilot import load_measurements
+
+    with_censored = load_measurements(raw, campaign, strict=False)
+    assert int((with_censored.frame["censoring"] != "none").sum()) > 0
+
+    plan = plan_batch(
+        campaign, candidates, with_censored, suite=physchem_suite, n_bootstrap=20, seed=0
+    )
+
+    # Nothing censored survived into the data the model saw.
+    assert plan.measurements is not None
+    assert (plan.measurements.frame["censoring"] == "none").all()
+
+    # And every removed row is in the exported record, not just a note.
+    from assaypilot.data.validation import ExclusionCode
+
+    # One exclusion per row, not per variant: replicates are recorded separately.
+    codes = [e["code"] for e in plan.manifest.exclusions]
+    assert codes.count(ExclusionCode.CENSORED_VALUE) == len(censored_ids)
+
+
+def test_predicted_values_are_labelled_with_the_transformed_units(simulated_inputs, physchem_suite):
+    """A prediction fitted on log10 values is not a number of raw assay units."""
+    from assaypilot.data.loaders import apply_transform
+
+    campaign, measurements, candidates = simulated_inputs
+    positive = measurements.frame.copy()
+    positive["value"] = positive["value"] - positive["value"].min() + 1.0
+    positive["value_raw"] = positive["value"]
+    shifted = type(measurements)(campaign=campaign, frame=positive, report=measurements.report)
+    transformed = apply_transform(shifted, "log10")
+
+    plan = plan_batch(
+        campaign, candidates, transformed, suite=physchem_suite, n_bootstrap=20, seed=0
+    )
+    units = set(plan.selected["predicted_value_units"])
+    assert units == {f"log10({campaign.assay_units})"}
+
+
+def test_coverage_is_measured_against_each_split_s_own_training_set(
+    simulated_inputs, physchem_suite
+):
+    """Pooling training rows across splits would make held-out distances come out as zero."""
+    plan = _plan(simulated_inputs, physchem_suite)
+    summary = plan.coverage.summary
+
+    assert plan.evaluation is not None and len(plan.evaluation.split_plan.splits) > 1
+    assert summary["max_evaluated_distance"] is not None
+    assert summary["evaluated_distance_median"] is not None
+    # A sequence held out in one split is training data in another; if the
+    # pooled union were used, these would collapse towards zero.
+    assert summary["evaluated_distance_median"] > 0
+    assert summary["max_evaluated_distance"] > 0
+
+
+def test_unseen_substitutions_are_counted_against_all_measurements(
+    simulated_inputs, physchem_suite
+):
+    """The warning says 'never appears in the measurements', so that is what is counted."""
+    from assaypilot.sequences import substitutions
+
+    campaign, measurements, _ = simulated_inputs
+    plan = _plan(simulated_inputs, physchem_suite)
+
+    measured = {
+        (s.position, s.mutant)
+        for sequence in measurements.frame["sequence"]
+        for s in substitutions(campaign.reference_sequence, sequence)
+    }
+    for row in plan.coverage.frame.itertuples(index=False):
+        candidate = plan.candidates.frame.set_index("candidate_id").loc[row.candidate_id]
+        expected = sum(
+            1
+            for s in substitutions(campaign.reference_sequence, candidate["sequence"])
+            if (s.position, s.mutant) not in measured
+        )
+        assert int(row.n_unseen_substitutions) == expected

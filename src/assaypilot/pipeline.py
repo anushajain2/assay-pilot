@@ -42,6 +42,7 @@ from .models.registry import SuiteConfig, build_cache, build_methods, split_by_a
 from .reporting.manifest import RunManifest, environment_fingerprint, new_run_id
 from .selection.filters import FilterResult, filter_candidates
 from .selection.policies import SelectionOutcome, build_policy
+from .sequences import min_distance_to_set
 
 logger = logging.getLogger(__name__)
 
@@ -133,16 +134,24 @@ def _refit_on_all(
     return fitted, y, groups, sequences
 
 
-def _evaluated_sequences(measurements: MeasurementSet, split_plan: SplitPlan) -> list[str]:
-    frame = measurements.frame
-    index = sorted({int(i) for split in split_plan.splits for i in split.test_index})
-    return frame.iloc[index]["sequence"].tolist()
+def _evaluated_distances(measurements: MeasurementSet, split_plan: SplitPlan) -> list[int]:
+    """How far each held-out sequence was from *its own split's* training set.
 
-
-def _training_sequences(measurements: MeasurementSet, split_plan: SplitPlan) -> list[str]:
+    Taking the union of training rows across splits would put a sequence in
+    both partitions — a variant held out in round 2 is training data for the
+    round 3 split — and its distance to "training" would come out as zero. The
+    region the evidence covers would then look far narrower than it is, and
+    candidates that were in fact covered would be flagged as outside it.
+    """
     frame = measurements.frame
-    index = sorted({int(i) for split in split_plan.splits for i in split.train_index})
-    return frame.iloc[index]["sequence"].tolist()
+    distances: list[int] = []
+    for split in split_plan.splits:
+        training = frame.iloc[split.train_index]["sequence"].tolist()
+        if not training:
+            continue
+        for sequence in frame.iloc[split.test_index]["sequence"]:
+            distances.append(min_distance_to_set(sequence, training))
+    return distances
 
 
 def plan_batch(
@@ -200,6 +209,14 @@ def plan_batch(
     split_plan: SplitPlan | None = None
     evidence_level = EVIDENCE_NONE
     chosen_method: Method | None = None
+
+    # Censored and non-finite measurements are removed here, not by the caller.
+    # Leaving it to the caller meant the CLI was safe while the documented
+    # Python API and the interface quietly fitted on detection limits as though
+    # they were exact measurements. The removed rows are recorded as
+    # exclusions, so they still appear in the report and in exclusions.csv.
+    if measurements is not None:
+        measurements = measurements.for_regression()
 
     has_labels = measurements is not None and not measurements.frame.empty
 
@@ -285,8 +302,12 @@ def plan_batch(
         ranking["predicted_value"] = sign * scores
     else:
         ranking["predicted_value"] = np.nan
+    # The units follow the value space the model was fitted in: a prediction
+    # made on log10 values is not a number of RFU.
     ranking["predicted_value_units"] = (
-        campaign.assay_units if chosen_method.info.uses_labels and has_labels else ""
+        measurements.value_units()
+        if chosen_method.info.uses_labels and has_labels and measurements is not None
+        else ""
     )
 
     # Observed values, where a candidate has already been measured.
@@ -303,8 +324,7 @@ def plan_batch(
         coverage = assess_coverage(
             candidates,
             measurements,
-            evaluated_sequences=_evaluated_sequences(measurements, split_plan),
-            training_sequences=_training_sequences(measurements, split_plan),
+            evaluated_distances=_evaluated_distances(measurements, split_plan),
         )
     elif has_labels:
         assert measurements is not None
