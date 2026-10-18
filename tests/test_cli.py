@@ -299,3 +299,19 @@ def test_input_errors_are_reported_without_a_traceback(tmp_path, inputs, capsys)
     code = main(["validate", "--campaign", inputs["campaign"], "--measurements", str(empty)])
     assert code == 2
     assert "error:" in capsys.readouterr().err
+
+
+def test_app_without_streamlit_explains_how_to_install(monkeypatch, capsys):
+    """A missing optional extra must say what to install, not leak an import error."""
+    import importlib.util
+
+    real_find_spec = importlib.util.find_spec
+
+    def missing_streamlit(name, *args, **kwargs):
+        return None if name == "streamlit" else real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", missing_streamlit)
+    assert main(["app"]) == 1
+    error = capsys.readouterr().err
+    assert 'pip install "assaypilot[app]"' in error
+    assert "command line" in error

@@ -424,21 +424,28 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
 
 def cmd_app(args: argparse.Namespace) -> int:
     """Launch the Streamlit interface."""
+    import importlib.util
     import subprocess
+
+    # Checked before launching: `python -m streamlit` on a machine without it
+    # prints "No module named streamlit", which does not tell the researcher
+    # what to do about it.
+    if importlib.util.find_spec("streamlit") is None:
+        print(
+            "The interface needs Streamlit, which is not installed in this environment."
+            '\nInstall it with:  pip install "assaypilot[app]"'
+            "\nEverything the interface does is also available from the command line;"
+            " try 'assaypilot plan --help'.",
+            file=sys.stderr,
+        )
+        return 1
 
     app_path = Path(__file__).parent / "app" / "streamlit_app.py"
     command = [sys.executable, "-m", "streamlit", "run", str(app_path)]
     if args.port:
         command += ["--server.port", str(args.port)]
     print("Starting the AssayPilot interface:", " ".join(command))
-    try:
-        return subprocess.call(command)
-    except FileNotFoundError:  # pragma: no cover - depends on the environment
-        print(
-            "Streamlit is not installed. Install it with 'pip install \"assaypilot[app]\"'.",
-            file=sys.stderr,
-        )
-        return 1
+    return subprocess.call(command)
 
 
 # ---------------------------------------------------------------------- parser
