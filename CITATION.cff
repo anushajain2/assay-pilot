@@ -5,8 +5,10 @@ message: >-
   methods and datasets you used (ESM-2, ProteinGym, FLIP) directly.
 type: software
 authors:
-  - name: "The AssayPilot contributors"
-repository-code: "https://github.com/assaypilot/assaypilot"
+  - family-names: Jain
+    given-names: Anusha
+    alias: anushajain2
+repository-code: "https://github.com/anushajain2/assay-pilot"
 license: Apache-2.0
 version: 0.1.0
 date-released: "2026-10-18"

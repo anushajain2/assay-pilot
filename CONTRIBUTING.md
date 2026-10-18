@@ -8,8 +8,8 @@ overclaims.
 ## Getting set up
 
 ```bash
-git clone https://github.com/assaypilot/assaypilot.git
-cd assaypilot
+git clone https://github.com/anushajain2/assay-pilot.git
+cd assay-pilot
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[esm,app,dev]"
 pytest

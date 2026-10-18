@@ -99,8 +99,8 @@ Python 3.10 or newer. AssayPilot is not on PyPI yet, so install from a
 checkout:
 
 ```bash
-git clone https://github.com/assaypilot/assaypilot.git
-cd assaypilot
+git clone https://github.com/anushajain2/assay-pilot.git
+cd assay-pilot
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[esm,app,dev]"
 pytest

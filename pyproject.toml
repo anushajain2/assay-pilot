@@ -41,9 +41,9 @@ dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.5"]
 assaypilot = "assaypilot.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/assaypilot/assaypilot"
-Documentation = "https://github.com/assaypilot/assaypilot/tree/main/docs"
-Issues = "https://github.com/assaypilot/assaypilot/issues"
+Homepage = "https://github.com/anushajain2/assay-pilot"
+Documentation = "https://github.com/anushajain2/assay-pilot/tree/main/docs"
+Issues = "https://github.com/anushajain2/assay-pilot/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/assaypilot"]
