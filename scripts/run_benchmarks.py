@@ -127,7 +127,6 @@ def main(argv: list[str] | None = None) -> int:
             result.frame.to_csv(assay_dir / "replay_rounds.csv", index=False)
             summary = result.summary()
             summary.insert(0, "assay", name)
-            summary.to_csv(assay_dir / "replay_summary.csv", index=False)
             (assay_dir / "replay_config.json").write_text(
                 json.dumps(result.to_dict(), indent=2), encoding="utf-8"
             )
@@ -137,6 +136,29 @@ def main(argv: list[str] | None = None) -> int:
 
             frame = result.frame.copy()
             frame.insert(0, "assay", name)
+            # Assay values live on whatever scale the experiment used — an
+            # esterase activity near 50, a fitness near 1 — so they cannot be
+            # averaged across assays. The percentile of a value within its own
+            # assay's pool can be: "the best variant this strategy chose sits
+            # at the 97th percentile of what was available".
+            pool = measurements.frame["value"].to_numpy(dtype=float)
+            for column in ("best_selected", "best_found"):
+                frame[f"{column}_pct"] = [
+                    float((pool <= value).mean()) if pd.notna(value) else float("nan")
+                    for value in frame[column]
+                ]
+            final = frame.sort_values("round").groupby(["strategy", "seed"]).tail(1)
+            percentiles = (
+                final.groupby("strategy")
+                .agg(
+                    best_selected_pct_mean=("best_selected_pct", "mean"),
+                    best_found_pct_mean=("best_found_pct", "mean"),
+                )
+                .reset_index()
+            )
+            summary = summary.merge(percentiles, on="strategy", how="left")
+            summary.to_csv(assay_dir / "replay_summary.csv", index=False)
+
             all_rounds.append(frame)
             per_assay.append(summary)
             print(summary.to_string(index=False))
@@ -151,19 +173,25 @@ def main(argv: list[str] | None = None) -> int:
         per_assay_frame.to_csv(out_dir / "per_assay_summary.csv", index=False)
 
         # The aggregate averages per-assay means, so a large assay does not
-        # dominate by contributing more rows.
+        # dominate by contributing more rows. It aggregates only quantities
+        # that mean the same thing in every assay: hit counts, which are
+        # counts of wells, and percentiles within each assay's own pool. Raw
+        # assay values are deliberately absent — averaging an esterase
+        # activity of 50 with a fitness of 0.5 produces a number with no
+        # interpretation, and whichever assay has the largest units decides it.
         aggregate = (
             per_assay_frame.groupby("strategy")
             .agg(
                 assays=("assay", "nunique"),
-                best_found_mean_of_assay_means=("best_found_mean", "mean"),
+                best_selected_pct_mean=("best_selected_pct_mean", "mean"),
                 n_hits_mean_of_assay_means=("n_hits_mean", "mean"),
                 seconds_mean=("seconds_mean", "mean"),
             )
             .reset_index()
+            .sort_values("n_hits_mean_of_assay_means", ascending=False)
         )
         aggregate.to_csv(out_dir / "aggregate_summary.csv", index=False)
-        print("\n=== aggregate (mean of per-assay means) ===")
+        print("\n=== aggregate (mean of per-assay means; comparable quantities only) ===")
         print(aggregate.to_string(index=False))
 
     (out_dir / "run_info.json").write_text(
@@ -181,6 +209,9 @@ def main(argv: list[str] | None = None) -> int:
                     " corpora; these are not unseen-sequence evaluations.",
                     "Per-assay results are reported alongside the aggregate; the aggregate is"
                     " a mean of per-assay means.",
+                    "The aggregate covers only quantities that are comparable across assays"
+                    " — hit counts and within-assay percentiles. Raw assay values are not"
+                    " averaged across assays, because their units differ.",
                 ],
             },
             indent=2,

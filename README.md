@@ -603,11 +603,16 @@ Version 0.1.0, alpha. The workflow is complete end to end: validation, evaluatio
 exports, round scoring, campaign history, CLI, interface, and the replay harness all work and are
 covered by tests.
 
-What is **not** established: any numerical benefit over existing tools, or on any particular
-assay. The comparison figures a release should ship are produced by `assaypilot benchmark` on
-public datasets you download yourself; `docs/benchmarks.md` describes the protocol and how to
-regenerate them. No benchmark results are claimed in this README because none have been produced
-on public data by this codebase yet.
+A first public-data run exists: five ProteinGym enzyme assays, 48 initial measurements then
+5 rounds of 24, 5 seeds each. The two ESM-2 methods found about 1.5× as many hits as random
+selection (40.8 and 40.9 against 27.0, averaged over assays), while the one-hot baseline found
+26.0 — slightly *below* random, which is exactly the signal the baseline exists to give. On one
+of the five assays nothing beat random at all. Numbers, caveats, and the command to reproduce
+them are in [docs/benchmarks.md](docs/benchmarks.md#a-first-run-five-proteingym-assays).
+
+What is **not** established: a benefit over other tools, or on any assay other than those five —
+which were also the development set for the harness, so they demonstrate that the pipeline
+produces sane numbers rather than serving as an independent evaluation.
 
 ---
 
