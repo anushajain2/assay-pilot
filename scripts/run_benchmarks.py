@@ -58,8 +58,12 @@ def main(argv: list[str] | None = None) -> int:
         help="pin the checkpoint revision; results are not reproducible without it",
     )
     parser.add_argument("--cache-dir", default=None)
-    parser.add_argument("--threshold-quantile", type=float, default=0.9,
-                        help="hit threshold, as a quantile of the assay's measured values")
+    parser.add_argument(
+        "--threshold-quantile",
+        type=float,
+        default=0.9,
+        help="hit threshold, as a quantile of the assay's measured values",
+    )
     args = parser.parse_args(argv)
 
     data_dir = Path(args.data)

@@ -63,7 +63,7 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
       - run: ruff check src tests scripts
-      - run: ruff format --check src tests
+      - run: ruff format --check src tests scripts
 
   build:
     name: build the package

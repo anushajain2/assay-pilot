@@ -57,8 +57,7 @@ def main(argv: list[str] | None = None) -> int:
 
     simulated.truth.to_csv(out / "ground_truth.csv", index=False)
     (out / "README.md").write_text(
-        simulated.description
-        + "\n## Run it\n\n"
+        simulated.description + "\n## Run it\n\n"
         "```bash\n"
         "assaypilot validate \\\n"
         "  --campaign examples/simulated-enzyme/campaign.json \\\n"

@@ -131,11 +131,17 @@ checkpoint size. The harness records wall-clock seconds per selection step so
 you can measure your own limits. Publish measured numbers with the hardware
 they were measured on; do not promise real-time operation.
 
-Useful measurements to record for a release:
+`scripts/profile_runtime.py` measures the numbers worth publishing — embedding
+throughput, planning time across pool sizes with a cold and a warm cache, and
+peak memory — and writes them with the hardware and package versions beside
+them:
 
-| Quantity | How to get it |
-| --- | --- |
-| Embedding throughput (sequences/s) | Time a cold `plan` run with `--no-cache` |
-| Planning time, 150 measured / 1,000 candidates | `assaypilot plan` on a cached pool |
-| Peak memory | `/usr/bin/time -l` (macOS) or `-v` (Linux) |
-| Cache size for a pool | `du -sh ~/.cache/assaypilot/embeddings` |
+```bash
+python scripts/profile_runtime.py --out results/profile \
+  --representation esm2 --esm-revision <commit> \
+  --pool-sizes 100 500 1000 5000
+```
+
+It writes `profile.csv`, `profile.md` (a table ready to paste into a report),
+and `environment.json`. The table says in its own header that it is a
+measurement from one machine, not a performance claim.

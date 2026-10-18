@@ -26,9 +26,7 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 #: ProteinGym publishes bundles of DMS assays; the URL is versioned by release.
-DEFAULT_BUNDLE_URL = (
-    "https://marks.hms.harvard.edu/proteingym/DMS_ProteinGym_substitutions.zip"
-)
+DEFAULT_BUNDLE_URL = "https://marks.hms.harvard.edu/proteingym/DMS_ProteinGym_substitutions.zip"
 
 
 def download(url: str, destination: Path) -> Path:
