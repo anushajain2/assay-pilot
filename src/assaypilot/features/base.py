@@ -60,6 +60,16 @@ class EmbeddingBackend(ABC):
     def fingerprint(self) -> dict[str, Any]:
         """Everything needed to reproduce this representation exactly."""
 
+    def prepare(self) -> None:
+        """Settle anything the fingerprint depends on, before it is used as a cache key.
+
+        The default does nothing. A backend whose fingerprint is only fully
+        known once a checkpoint has been resolved overrides this, so that the
+        cache namespace cannot depend on whether this particular run happened
+        to load the model.
+        """
+        return None
+
     @property
     def is_language_model(self) -> bool:
         """Whether this representation comes from a pretrained protein language model."""
@@ -70,9 +80,20 @@ class EmbeddingBackend(ABC):
         """One line shown to the researcher in reports."""
         return self.name
 
+    #: Fingerprint fields that describe *how* a setting was established rather
+    #: than what it is. They belong in the manifest but not in the cache key:
+    #: pinning the revision a backend had already resolved must not invalidate
+    #: every cached vector.
+    PROVENANCE_FIELDS: frozenset[str] = frozenset({"revision_source"})
+
     def fingerprint_key(self) -> str:
         """Stable short hash of the fingerprint, used as the cache namespace."""
-        blob = json.dumps(self.fingerprint(), sort_keys=True).encode("utf-8")
+        fingerprint = {
+            key: value
+            for key, value in self.fingerprint().items()
+            if key not in self.PROVENANCE_FIELDS
+        }
+        blob = json.dumps(fingerprint, sort_keys=True).encode("utf-8")
         return hashlib.sha256(blob).hexdigest()[:16]
 
 
@@ -143,6 +164,9 @@ def embed_sequences(
     if not sequences:
         return np.zeros((0, 0), dtype=np.float32)
 
+    # Settle the fingerprint first: it is the cache namespace, and it must not
+    # depend on whether this run ends up loading the model.
+    backend.prepare()
     namespace = backend.fingerprint_key()
     hashes = [sequence_hash(s) for s in sequences]
     vectors: dict[str, np.ndarray] = {}

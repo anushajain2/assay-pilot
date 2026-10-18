@@ -153,9 +153,16 @@ def test_budget_separates_candidates_from_controls(simulated_inputs, physchem_su
 
 
 def test_plan_without_measurements_is_labelled_unvalidated(simulated_inputs, physchem_suite):
+    """With no labels and no label-free method, planning fails with a reason
+    rather than producing something that looks validated. The complementary
+    case — a label-free ranking, labelled unvalidated — is in tests/test_esm.py."""
+    from assaypilot.features.esm import esm_available
+
+    del esm_available
     campaign, _, candidates = simulated_inputs
-    # Without labels only the pretrained score could rank candidates, and it
-    # needs torch; the failure must be explicit rather than silent.
+
+    # This suite has no label-free method, so there is nothing that could rank
+    # candidates without measurements, and the refusal must say so.
     with pytest.raises(InsufficientDataError, match="No measured data"):
         plan_batch(campaign, candidates, None, suite=physchem_suite)
 
@@ -169,10 +176,25 @@ def test_empty_candidate_pool_is_rejected(simulated_inputs, physchem_suite):
         plan_batch(campaign, empty, measurements, suite=physchem_suite)
 
 
-def test_unavailable_methods_appear_in_the_warnings(simulated_inputs, physchem_suite):
-    plan = _plan(simulated_inputs, physchem_suite)
-    # torch is not installed in the test environment, so the pretrained score
-    # must be reported as unavailable rather than quietly skipped.
+def test_a_method_that_cannot_run_is_named_rather_than_skipped(simulated_inputs, physchem_suite):
+    """Whether or not ESM is installed, the report must account for all three methods."""
+    from dataclasses import replace as replace_dataclass
+
+    from assaypilot.features.esm import esm_available
+
+    if esm_available():
+        pytest.skip("ESM is installed; the available case is covered by tests/test_esm.py")
+
+    campaign, measurements, candidates = simulated_inputs
+    with_pretrained = replace_dataclass(physchem_suite, include_pretrained=True)
+    plan = plan_batch(
+        campaign, candidates, measurements, suite=with_pretrained, n_bootstrap=20, seed=0
+    )
+
+    assert plan.evaluation is not None
+    assert "pretrained_esm_masked_marginal" in plan.evaluation.unavailable
+    reason = plan.evaluation.unavailable["pretrained_esm_masked_marginal"]
+    assert "torch" in reason and "assaypilot[esm]" in reason
     assert any("pretrained" in warning for warning in plan.warnings)
 
 

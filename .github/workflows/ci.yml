@@ -52,6 +52,42 @@ jobs:
           test -s ci_plan/report.html
           test -s ci_plan/run_manifest.json
 
+  esm:
+    name: ESM-2 tests (slow)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Cache the checkpoint so repeat runs do not re-download it.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-esm2-8M-v1
+
+      - name: Install with the esm extra
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[esm,dev]"
+
+      # The smallest ESM-2 release: enough to check tokenizer offsets, pooling,
+      # additivity, and revision recording without a large download.
+      - name: Test against a real checkpoint
+        env:
+          ASSAYPILOT_TEST_CHECKPOINT: facebook/esm2_t6_8M_UR50D
+        run: pytest -m slow -q
+
+      # The fast suite must stay offline even when torch is installed.
+      - name: Confirm the fast suite needs no model weights
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+          HF_HOME: ${{ runner.temp }}/empty-hf
+        run: pytest -q
+
   lint:
     name: lint
     runs-on: ubuntu-latest

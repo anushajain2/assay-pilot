@@ -572,11 +572,18 @@ the decision, and every other entry point calls it.
 
 ```bash
 pip install -e ".[dev]"
-pytest                      # full suite, no model downloads required
-pytest -m "not slow"        # quick subset
-ruff check src tests
-ruff format src tests
+pytest                      # fast suite: no model downloads, no network
+pytest -m slow              # adds the ESM-2 tests (downloads an 8M checkpoint)
+ruff check src tests scripts
+ruff format src tests scripts
 ```
+
+The fast suite is verified to run with the network disabled and an empty Hugging Face cache,
+even when torch is installed. The ESM-2 paths — tokenizer offsets, padding-aware pooling,
+additivity of masked-marginal scores, revision recording, cache namespacing — are covered by
+`tests/test_esm.py`, which is opt-in via `-m slow` and defaults to the smallest ESM-2
+checkpoint. Point it at another with
+`ASSAYPILOT_TEST_CHECKPOINT=facebook/esm2_t12_35M_UR50D pytest -m slow`.
 
 The test suite deliberately covers the failure cases that matter in this domain: sequence
 validation, replicate leakage, preprocessing leakage, constraint enforcement, round matching, and

@@ -23,7 +23,9 @@ model size alone does not establish better performance on a particular assay.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -69,6 +71,33 @@ def _require_esm() -> tuple[Any, Any]:
     return torch, transformers
 
 
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _revision_from_cache(checkpoint: str) -> str | None:
+    """The commit a cached checkpoint came from, read from the local cache.
+
+    Hugging Face stores downloads under ``.../snapshots/<commit>/``, so the
+    commit can be recovered without a network call. Returns ``None`` when the
+    checkpoint is not cached, when the path does not look like a commit, or
+    when ``huggingface_hub`` is unavailable.
+    """
+    try:  # pragma: no cover - depends on the environment
+        from huggingface_hub import try_to_load_from_cache
+    except Exception:
+        return None
+
+    try:
+        path = try_to_load_from_cache(checkpoint, "config.json")
+    except Exception:
+        return None
+
+    if not isinstance(path, str):
+        return None
+    candidate = Path(path).parent.name
+    return candidate if _SHA_RE.match(candidate) else None
+
+
 def _resolve_device(device: str | None) -> str:
     torch, _ = _require_esm()
     if device and device != "auto":
@@ -94,6 +123,7 @@ class _ESMModelHolder:
 
         key = (checkpoint, revision, self.device)
         cached = self._cache.get(key)
+        first_load = cached is None
         if cached is None:
             tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint, revision=revision)
             model = transformers.AutoModelForMaskedLM.from_pretrained(checkpoint, revision=revision)
@@ -103,18 +133,37 @@ class _ESMModelHolder:
             self._cache[key] = cached
         self.tokenizer, self.model = cached
 
-        resolved = (
-            revision
-            or getattr(self.model.config, "_commit_hash", None)
-            or getattr(self.model.config, "commit_hash", None)
-        )
-        self.resolved_revision = resolved
-        if resolved is None:
+        if revision is not None:
+            self.resolved_revision: str | None = revision
+            self.revision_source = "requested"
+        else:
+            # Some transformers versions record the commit on the config; others
+            # do not. The local cache always knows it, and reading it there needs
+            # no network call, which matters because AssayPilot runs offline by
+            # default. Recording the resolved commit is what makes the run
+            # reproducible: "whichever weights were current that day" is not.
+            from_config = getattr(self.model.config, "_commit_hash", None) or getattr(
+                self.model.config, "commit_hash", None
+            )
+            self.resolved_revision = from_config or _revision_from_cache(checkpoint)
+            self.revision_source = "resolved" if self.resolved_revision else "unpinned"
+
+        # The backend and the scorer share one loaded model, so this is said
+        # once per checkpoint rather than once per object that uses it.
+        if self.resolved_revision is None and first_load:
             logger.warning(
-                "The ESM checkpoint %s was loaded without a pinned revision. The run manifest"
-                " will record 'unpinned', which is not sufficient to reproduce the result"
-                " exactly. Pass --esm-revision <commit> to pin it.",
+                "The ESM checkpoint %s was loaded without a pinned revision, and the"
+                " revision could not be resolved locally. The run manifest will record"
+                " 'unpinned', which is not sufficient to reproduce the result exactly."
+                " Pass --esm-revision <commit> to pin it.",
                 checkpoint,
+            )
+        elif self.revision_source == "resolved" and first_load:
+            logger.info(
+                "Resolved %s to revision %s; pass --esm-revision %s to pin it explicitly.",
+                checkpoint,
+                self.resolved_revision,
+                self.resolved_revision,
             )
 
     def encode(self, sequences: Sequence[str]):
@@ -148,12 +197,45 @@ class ESM2Backend(EmbeddingBackend):
         self.pooling = pooling
         self.device = device
         self._holder: _ESMModelHolder | None = None
+        self._resolved: str | None = None
 
     @property
     def holder(self) -> _ESMModelHolder:
         if self._holder is None:
             self._holder = _ESMModelHolder(self.checkpoint, self.revision, self.device)
         return self._holder
+
+    def prepare(self) -> None:
+        """Settle which checkpoint revision this backend represents.
+
+        The fingerprint is the embedding cache's namespace, so it has to be
+        the same whether or not the model ends up being loaded. Without this,
+        a cold run (model loaded, revision resolved) and a warm run (every
+        embedding cached, model never loaded) would compute different
+        namespaces for identical vectors — and, worse, two different revisions
+        could both fall back to ``"unpinned"`` and share cache entries.
+
+        Resolving from the local Hugging Face cache needs no network. If the
+        checkpoint has never been downloaded there is nothing local to read,
+        so the model is loaded — which is what the caller was about to do
+        anyway.
+        """
+        if self.revision is not None or self._resolved is not None or self._holder is not None:
+            return
+        cached = _revision_from_cache(self.checkpoint)
+        if cached is not None:
+            self._resolved = cached
+            return
+        self.holder  # noqa: B018 - loading it is how an uncached revision is learned
+
+    @property
+    def effective_revision(self) -> str | None:
+        """The revision this backend will be recorded under, if it is knowable."""
+        if self.revision is not None:
+            return self.revision
+        if self._holder is not None:
+            return self._holder.resolved_revision
+        return self._resolved
 
     @property
     def is_language_model(self) -> bool:
@@ -190,11 +272,18 @@ class ESM2Backend(EmbeddingBackend):
         return pooled.detach().cpu().numpy().astype(np.float32)
 
     def fingerprint(self) -> dict[str, Any]:
-        resolved = self._holder.resolved_revision if self._holder is not None else self.revision
+        resolved = self.effective_revision
+        if self.revision is not None:
+            source = "requested"
+        elif resolved is not None:
+            source = "resolved"
+        else:
+            source = "unpinned"
         return {
             "backend": self.name,
             "checkpoint": self.checkpoint,
             "revision": resolved or "unpinned",
+            "revision_source": source,
             "layer": self.layer,
             "pooling": self.pooling,
             "is_language_model": True,
@@ -282,10 +371,17 @@ class MaskedMarginalScorer:
 
     def fingerprint(self) -> dict[str, Any]:
         resolved = self._holder.resolved_revision if self._holder is not None else self.revision
+        if self.revision is not None:
+            source = "requested"
+        elif resolved is not None:
+            source = "resolved"
+        else:
+            source = "unpinned"
         return {
             "scorer": "esm2_masked_marginals",
             "checkpoint": self.checkpoint,
             "revision": resolved or "unpinned",
+            "revision_source": source,
             "combination": "sum_of_single_site_scores",
             "additive_approximation": True,
         }

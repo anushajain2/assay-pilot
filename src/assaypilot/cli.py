@@ -458,8 +458,10 @@ def _add_suite_arguments(parser: argparse.ArgumentParser) -> None:
         choices=("esm2", "physchem"),
         default="esm2",
         help=(
-            "sequence representation for the assay-trained model. 'physchem' needs no model"
-            " weights and is labelled as not a protein language model (default: esm2)"
+            "which representation the comparison uses. 'esm2' runs all three methods."
+            " 'physchem' uses no protein language model at all: it needs no model weights,"
+            " skips the pretrained ESM-2 score, and is labelled as not a protein language"
+            " model wherever it appears (default: esm2)"
         ),
     )
     group.add_argument("--esm-checkpoint", default="facebook/esm2_t12_35M_UR50D")
@@ -632,10 +634,40 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Libraries that log routine activity at INFO, or warn about things the
+#: researcher cannot act on. Each sets its own level, so raising the root
+#: level is not enough to quieten them.
+_NOISY_LOGGERS = (
+    "httpx",
+    "httpx2",
+    "httpcore",
+    "urllib3",
+    "filelock",
+    "transformers",
+    "huggingface_hub",
+    "torch.distributed.elastic.multiprocessing.redirects",
+)
+
+
+def _quiet_third_party_logs() -> None:
+    """Keep library chatter out of the report the researcher asked for.
+
+    Loading a checkpoint logs one line per HTTP request; without this, the
+    output of a plan is mostly Hugging Face URLs. ``--verbose`` restores them.
+    """
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.ERROR)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format=LOG_FORMAT)
+    logging.basicConfig(level=logging.WARNING, format=LOG_FORMAT)
+    logging.getLogger("assaypilot").setLevel(logging.DEBUG if args.verbose else logging.INFO)
+    if args.verbose:
+        logging.getLogger().setLevel(logging.INFO)
+    else:
+        _quiet_third_party_logs()
     try:
         return int(args.func(args) or 0)
     except AssayPilotError as exc:

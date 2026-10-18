@@ -74,6 +74,14 @@ Computation cost is one forward pass per *mutated position* of the reference
 A dependency-free representation so that tests, CI, the bundled demo, and a
 first look on a laptop work without downloading weights.
 
+**`physchem` means "no protein language model at all".** It does not only
+change the assay-trained model's features: it also skips the pretrained ESM-2
+masked-marginal score, because choosing this option to avoid downloading
+weights should not then download weights. The comparison then runs two methods
+instead of three, and the report names the omitted one with that reason — an
+exclusion by configuration, which is a different statement from "the backend
+was missing".
+
 Seven residue property scales — hydropathy, volume, charge, polarity,
 isoelectric point, helix propensity, aromaticity — standardised across the 20
 amino acids, then pooled globally and in `n_bins` contiguous positional bins

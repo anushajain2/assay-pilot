@@ -94,7 +94,7 @@ def build_methods(
     if config.include_baseline:
         methods.append(OneHotRidgeBaseline(campaign.reference_sequence, alphas=config.alphas))
 
-    if config.include_pretrained:
+    if config.include_pretrained and config.representation != "physchem":
         methods.append(
             PretrainedScoreMethod(
                 campaign.reference_sequence,
@@ -115,6 +115,33 @@ def build_methods(
         )
 
     return methods
+
+
+def excluded_by_config(config: SuiteConfig | None = None) -> dict[str, str]:
+    """Methods this configuration leaves out, and why.
+
+    ``--representation physchem`` means "no protein language model": choosing
+    it to avoid downloading weights should not then download weights for the
+    pretrained score. The exclusion is returned rather than applied silently,
+    because a comparison that ran without the pretrained method has to say so
+    — and "excluded by your configuration" is a different statement from "the
+    backend was missing".
+    """
+    config = config or SuiteConfig()
+    excluded: dict[str, str] = {}
+    if config.representation == "physchem" and config.include_pretrained:
+        excluded["pretrained_esm_masked_marginal"] = (
+            "not run: the physicochemical representation was selected, which uses no protein"
+            " language model. Use --representation esm2 to include the pretrained ESM-2"
+            " score."
+        )
+    if not config.include_baseline:
+        excluded["baseline_onehot_ridge"] = "not run: excluded by the suite configuration"
+    if not config.include_assay_trained:
+        excluded["assay_trained_embedding_ridge"] = "not run: excluded by the suite configuration"
+    if config.representation != "physchem" and not config.include_pretrained:
+        excluded["pretrained_esm_masked_marginal"] = "not run: excluded by the suite configuration"
+    return excluded
 
 
 def split_by_availability(methods: list[Method]) -> tuple[list[Method], dict[str, str]]:

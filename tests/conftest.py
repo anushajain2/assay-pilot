@@ -98,9 +98,17 @@ def simulated_inputs(simulated):
 
 @pytest.fixture
 def physchem_suite(tmp_path) -> SuiteConfig:
-    """A suite that needs no model weights, with a per-test embedding cache."""
+    """A suite that needs no model weights, with a per-test embedding cache.
+
+    The pretrained ESM-2 score is excluded deliberately. It is *available*
+    whenever torch happens to be installed, and the fast suite must not start
+    downloading a checkpoint because of that: its guarantee is that it runs
+    offline in seconds. The ESM-2 paths are covered by ``tests/test_esm.py``,
+    which is marked ``slow`` and opted into.
+    """
     return SuiteConfig(
         representation="physchem",
         cache_dir=str(tmp_path / "cache"),
         physchem_bins=4,
+        include_pretrained=False,
     )

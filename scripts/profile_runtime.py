@@ -96,19 +96,36 @@ def main(argv: list[str] | None = None) -> int:
     backend = build_backend(suite)
     sequences = reference_pool.candidates["sequence"].tolist()[:200]
     cold_cache = EmbeddingCache(cache_dir / "cold", enabled=False)
+
+    # Loading the checkpoint is a one-time cost. Folding it into the
+    # throughput figure would understate throughput and hide the load, so the
+    # two are measured separately and both are reported.
+    start = time.perf_counter()
+    embed_sequences(backend, sequences[:1], cache=cold_cache)
+    load_seconds = time.perf_counter() - start
+    rows.append(
+        {
+            "step": "model load + first sequence",
+            "n_sequences": 1,
+            "seconds": round(load_seconds, 3),
+            "pool_size": None,
+        }
+    )
+    print(f"  model load + first sequence: {load_seconds:.2f}s")
+
     start = time.perf_counter()
     embed_sequences(backend, sequences, cache=cold_cache)
     elapsed = time.perf_counter() - start
     rows.append(
         {
-            "step": "embedding (cold, no cache)",
+            "step": "embedding throughput (model loaded, no cache)",
             "n_sequences": len(sequences),
             "seconds": round(elapsed, 3),
             "sequences_per_second": round(len(sequences) / elapsed, 1) if elapsed else None,
             "pool_size": None,
         }
     )
-    print(f"  embedding: {len(sequences) / elapsed:.1f} sequences/s")
+    print(f"  embedding: {len(sequences) / elapsed:.1f} sequences/s once loaded")
 
     measurements = load_measurements(reference_pool.measurements, campaign, strict=False)
 

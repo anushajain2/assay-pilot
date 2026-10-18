@@ -51,6 +51,12 @@ packages = ["src/assaypilot"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["error::DeprecationWarning:assaypilot.*"]
+# Tests needing a downloaded protein-language-model checkpoint are opt-in, so
+# the default suite stays fast and works offline. Run them with `pytest -m slow`.
+addopts = "-m 'not slow'"
+markers = [
+  "slow: needs torch, transformers, and a downloadable ESM-2 checkpoint",
+]
 
 [tool.ruff]
 line-length = 100

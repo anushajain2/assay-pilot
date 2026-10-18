@@ -27,8 +27,13 @@ def replay_config(tmp_path) -> ReplayConfig:
         n_rounds=2,
         seeds=(0, 1),
         diversity_min_distance=2,
+        # No pretrained method: the fast suite must not download a checkpoint
+        # just because torch happens to be installed.
         suite=SuiteConfig(
-            representation="physchem", cache_dir=str(tmp_path / "cache"), physchem_bins=4
+            representation="physchem",
+            cache_dir=str(tmp_path / "cache"),
+            physchem_bins=4,
+            include_pretrained=False,
         ),
     )
 
@@ -90,10 +95,14 @@ def test_summary_and_comparison_tables(simulated, replay_config):
 
 def test_caveat_travels_with_the_result(simulated, replay_config):
     result = replay_campaign(simulated.campaign, simulated.measurements, replay_config)
+    from assaypilot.features.esm import esm_available
+
     assert REPLAY_CAVEAT in result.caveat
     assert "Retrospective replay" in result.to_dict()["caveat"]
-    # ESM is unavailable in the test environment, which must be stated too.
-    assert "not available in this environment" in result.caveat
+    # This replay excludes the pretrained method outright, so nothing should be
+    # reported as unavailable whether or not torch is installed.
+    del esm_available
+    assert "not available in this environment" not in result.caveat
 
 
 def test_replay_refuses_an_undersized_pool(simulated):

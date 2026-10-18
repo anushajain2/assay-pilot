@@ -38,7 +38,13 @@ from .evaluation.coverage import CoverageReport, assess_coverage
 from .evaluation.splits import SplitPlan, choose_split_plan
 from .evaluation.uncertainty import RankVariability, bootstrap_rank_variability
 from .models.base import Method
-from .models.registry import SuiteConfig, build_cache, build_methods, split_by_availability
+from .models.registry import (
+    SuiteConfig,
+    build_cache,
+    build_methods,
+    excluded_by_config,
+    split_by_availability,
+)
 from .reporting.manifest import RunManifest, environment_fingerprint, new_run_id
 from .selection.filters import FilterResult, filter_candidates
 from .selection.policies import SelectionOutcome, build_policy
@@ -202,8 +208,12 @@ def plan_batch(
     cache = build_cache(suite)
     all_methods = build_methods(campaign, suite, cache=cache)
     usable, unavailable = split_by_availability(all_methods)
+    # A method left out by the configuration is reported in the same place as
+    # one whose backend is missing, with its own wording: the reader needs to
+    # know the comparison did not include it either way.
+    unavailable = {**excluded_by_config(suite), **unavailable}
     for key, reason in unavailable.items():
-        warnings.append(f"{key} was not available: {reason}")
+        warnings.append(f"{key} was not included: {reason}")
 
     evaluation: EvaluationResult | None = None
     split_plan: SplitPlan | None = None
@@ -426,9 +436,20 @@ def plan_batch(
             how="left",
         )
 
+    # The representation is recorded at the top level even when the chosen
+    # method does not use it: the comparison that picked the simpler method
+    # still depended on the ESM results, so reproducing the decision needs the
+    # checkpoint and revision those results came from.
+    representation: dict[str, Any] | None = None
+    for candidate_method in all_methods:
+        details = candidate_method.info.details.get("representation")
+        if details:
+            representation = details
+
     manifest = _build_manifest(
         run_id=run_id,
         campaign=campaign,
+        representation=representation,
         settings=settings,
         suite=suite,
         policy=policy,
@@ -481,6 +502,7 @@ def _build_manifest(
     campaign: Campaign,
     settings: SelectionSettings,
     suite: SuiteConfig,
+    representation: dict[str, Any] | None,
     policy: str,
     split_policy: str,
     seed: int,
@@ -553,6 +575,7 @@ def _build_manifest(
         config={
             "selection_settings": settings.to_dict(),
             "suite": suite.to_dict(),
+            "representation": representation,
             "selection_policy": policy,
             "split_policy": split_policy,
             "seed": seed,
