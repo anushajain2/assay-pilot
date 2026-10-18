@@ -4,9 +4,9 @@ When a new round of measurements arrives, AssayPilot scores the predictions it
 made **before** retraining anything. This is the only prospective evidence the
 tool ever has: everything else is retrospective.
 
-Matching is by ``design_id``, the immutable identifier written into the plan,
-with fallbacks to the candidate identifier and to the sequence itself, so a
-lab that renames wells can still match its results.
+Matching is by ``design_id``, the immutable identifier written into the plan.
+It is recomputed from each measured sequence, so a lab that renames its wells
+still matches: identity travels with the construct, not with the label.
 """
 
 from __future__ import annotations

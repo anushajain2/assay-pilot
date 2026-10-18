@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }}, python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # The suite deliberately needs no model weights and no network, so the
+      # heavy optional extras are not installed here.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Test
+        run: pytest -q --cov=assaypilot --cov-report=term-missing
+
+      - name: Run the bundled example end to end
+        run: |
+          assaypilot validate \
+            --campaign examples/simulated-enzyme/campaign.json \
+            --measurements examples/simulated-enzyme/measurements.csv \
+            --candidates examples/simulated-enzyme/candidates.csv
+          assaypilot plan \
+            --campaign examples/simulated-enzyme/campaign.json \
+            --measurements examples/simulated-enzyme/measurements.csv \
+            --candidates examples/simulated-enzyme/candidates.csv \
+            --representation physchem --bootstrap 100 -o ci_plan
+          test -s ci_plan/selected_variants.csv
+          test -s ci_plan/report.html
+          test -s ci_plan/run_manifest.json
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - run: ruff check src tests scripts
+      - run: ruff format --check src tests
+
+  build:
+    name: build the package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip build twine
+      - run: python -m build
+      - run: python -m twine check dist/*

@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+title: "AssayPilot: assay-specific experiment planning for protein variant campaigns"
+message: >-
+  If AssayPilot contributes to published work, please cite it, and cite the
+  methods and datasets you used (ESM-2, ProteinGym, FLIP) directly.
+type: software
+authors:
+  - name: "The AssayPilot contributors"
+repository-code: "https://github.com/assaypilot/assaypilot"
+license: Apache-2.0
+version: 0.1.0
+date-released: "2026-10-18"
+keywords:
+  - protein engineering
+  - directed evolution
+  - active learning
+  - protein language models
+  - experiment design
+abstract: >-
+  AssayPilot plans the next round of a protein engineering campaign from the
+  measurements already collected. It validates sequence-measurement inputs
+  against a declared reference, chooses an evaluation protocol that matches the
+  intended next step, compares a fixed suite of three prediction methods on
+  held-out measurements from the same campaign, applies a stated rule that
+  prefers the simpler method unless a paired bootstrap interval supports a more
+  complex one, and selects a fixed-size batch under explicit constraints. Every
+  plan is exported with a run manifest recording inputs, partitions, seeds,
+  hyperparameters and predictions, and each round's predictions are scored
+  against the measurements that follow before any retraining.
+references:
+  - type: article
+    title: "Benchmarking uncertainty quantification for protein engineering"
+    authors:
+      - family-names: Greenman
+        given-names: Kevin
+      - family-names: Amini
+        given-names: Ava
+      - family-names: Yang
+        given-names: Kevin
+    journal: "PLOS Computational Biology"
+    year: 2025
+    doi: "10.1371/journal.pcbi.1012639"
