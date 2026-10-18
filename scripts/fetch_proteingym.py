@@ -25,8 +25,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import urlretrieve
 
-#: ProteinGym publishes bundles of DMS assays; the URL is versioned by release.
-DEFAULT_BUNDLE_URL = "https://marks.hms.harvard.edu/proteingym/DMS_ProteinGym_substitutions.zip"
+#: ProteinGym publishes its bundles under a versioned path, so this pins a
+#: release rather than tracking whatever "latest" means today. Verified on
+#: 19 October 2026: 43 MB, 217 substitution assays. Use --url for another
+#: release, and record which one you used next to any result.
+PROTEINGYM_RELEASE = "ProteinGym_v1.1"
+DEFAULT_BUNDLE_URL = (
+    f"https://marks.hms.harvard.edu/proteingym/{PROTEINGYM_RELEASE}"
+    "/DMS_ProteinGym_substitutions.zip"
+)
 
 
 def download(url: str, destination: Path) -> Path:
@@ -118,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     provenance = {
         "downloaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "url": args.url,
+        "release": PROTEINGYM_RELEASE if args.url == DEFAULT_BUNDLE_URL else "custom",
         "archive": str(archive),
         "assays": record,
         "note": (
