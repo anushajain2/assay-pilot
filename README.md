@@ -603,16 +603,25 @@ Version 0.1.0, alpha. The workflow is complete end to end: validation, evaluatio
 exports, round scoring, campaign history, CLI, interface, and the replay harness all work and are
 covered by tests.
 
-A first public-data run exists: five ProteinGym enzyme assays, 48 initial measurements then
-5 rounds of 24, 5 seeds each. The two ESM-2 methods found about 1.5× as many hits as random
-selection (40.8 and 40.9 against 27.0, averaged over assays), while the one-hot baseline found
-26.0 — slightly *below* random, which is exactly the signal the baseline exists to give. On one
-of the five assays nothing beat random at all. Numbers, caveats, and the command to reproduce
-them are in [docs/benchmarks.md](docs/benchmarks.md#a-first-run-five-proteingym-assays).
+Public-data results exist: twelve ProteinGym assays in three runs — five used while building
+the harness, six drawn at random by a rule fixed beforehand, and GFP as a deliberate case study.
+Each campaign gets 168 wells (48 initial, then 5 rounds of 24) over 5 seeds.
 
-What is **not** established: a benefit over other tools, or on any assay other than those five —
-which were also the development set for the harness, so they demonstrate that the pipeline
-produces sane numbers rather than serving as an independent evaluation.
+On the six **held-out** assays the assay-trained model found 31.9 hits against 16.5 for random
+selection, with the pretrained ESM-2 score at 29.1 and the one-hot baseline at 19.8. But the
+useful finding is in the third run: **the ranking of methods reverses between datasets.** On
+GFP — 51,714 variants, 98% of them multi-substitution — the pretrained score came *last*, below
+random, losing on every seed, because it sums single-site terms and cannot represent epistasis;
+the one-hot baseline, worst on the single-mutant assays, came first by a factor of 2.7 over
+random. Every method has at least one assay where it does no better than chance.
+
+That is the case for evaluating per campaign rather than picking a method once, globally — and
+it is what AssayPilot does. Full tables, base-rate caveats, and the commands are in
+[docs/benchmarks.md](docs/benchmarks.md#measured-results).
+
+What is **not** established: a comparison against other tools (EVOLVEpro and similar are not in
+these tables), statistical significance from five seeds, or anything about assays beyond these
+twelve.
 
 ---
 

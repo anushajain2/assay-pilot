@@ -31,6 +31,11 @@ from assaypilot.benchmarks.replay import ReplayConfig, compare_strategies, repla
 from assaypilot.models.registry import SuiteConfig
 from assaypilot.reporting.manifest import environment_fingerprint
 
+#: Above this share of the pool, the "hit" threshold is not isolating a top
+#: slice — usually because many variants tie at a floor or ceiling value — and
+#: hit counts stop discriminating between strategies.
+MAX_INFORMATIVE_BASE_RATE = 0.25
+
 
 def discover(data_dir: Path) -> list[tuple[str, Path, Path]]:
     """Find (name, campaign.json, measurements.csv) triples under ``data_dir``."""
@@ -121,6 +126,23 @@ def main(argv: list[str] | None = None) -> int:
                     f" ({threshold:.4g}) for this replay"
                 )
 
+            # What share of the pool counts as a hit? A strategy's hit count
+            # means nothing without it: where ties at a floor or ceiling value
+            # push the "top decile" up to most of the pool, random selection
+            # scores highly and the metric cannot separate anything.
+            pool_values = measurements.frame.groupby("sequence")["value"].mean()
+            hit_base_rate = float(pool_values.map(campaign.is_hit).mean())
+            informative = hit_base_rate <= MAX_INFORMATIVE_BASE_RATE
+            print(
+                f"  {hit_base_rate:.0%} of the pool counts as a hit"
+                + (
+                    ""
+                    if informative
+                    else "  <-- threshold does not isolate a top slice;"
+                    " hit counts for this assay are uninformative"
+                )
+            )
+
             result = replay_campaign(campaign, measurements.frame, config)
             assay_dir = out_dir / name
             assay_dir.mkdir(parents=True, exist_ok=True)
@@ -157,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
                 .reset_index()
             )
             summary = summary.merge(percentiles, on="strategy", how="left")
+            summary["pool_hit_base_rate"] = hit_base_rate
+            summary["threshold_informative"] = informative
             summary.to_csv(assay_dir / "replay_summary.csv", index=False)
 
             all_rounds.append(frame)
@@ -188,7 +212,21 @@ def main(argv: list[str] | None = None) -> int:
                 seconds_mean=("seconds_mean", "mean"),
             )
             .reset_index()
-            .sort_values("n_hits_mean_of_assay_means", ascending=False)
+        )
+        # Assays whose threshold failed to isolate a top slice are kept in the
+        # per-assay table and dropped from this column, with the count stated,
+        # rather than quietly averaged in or silently removed everywhere.
+        usable = per_assay_frame[per_assay_frame["threshold_informative"]]
+        informative = (
+            usable.groupby("strategy")
+            .agg(
+                assays_with_usable_threshold=("assay", "nunique"),
+                n_hits_usable_assays_only=("n_hits_mean", "mean"),
+            )
+            .reset_index()
+        )
+        aggregate = aggregate.merge(informative, on="strategy", how="left").sort_values(
+            "n_hits_usable_assays_only", ascending=False
         )
         aggregate.to_csv(out_dir / "aggregate_summary.csv", index=False)
         print("\n=== aggregate (mean of per-assay means; comparable quantities only) ===")
@@ -212,6 +250,10 @@ def main(argv: list[str] | None = None) -> int:
                     "The aggregate covers only quantities that are comparable across assays"
                     " — hit counts and within-assay percentiles. Raw assay values are not"
                     " averaged across assays, because their units differ.",
+                    "Assays where the hit threshold covers more than"
+                    f" {MAX_INFORMATIVE_BASE_RATE:.0%} of the pool are reported per assay but"
+                    " excluded from the aggregate hit column, because random selection scores"
+                    " highly there and the metric separates nothing.",
                 ],
             },
             indent=2,

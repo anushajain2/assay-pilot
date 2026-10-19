@@ -129,92 +129,136 @@ table. Every figure in a report should cite the CSV it came from.
 
 ---
 
-## A first run: five ProteinGym assays
+## Measured results
 
-Produced by the protocol above on 19 October 2026. These are the only measured
-results this repository reports, and they come with the limits listed under
-"What a replay cannot tell you".
+Three runs, in the order they were done. Together they are the only measured
+results this repository reports, and the third one contradicts the first —
+which is the most useful thing in this section.
 
-**Setup.** ProteinGym v1.1 substitution assays, five of them chosen as enzymes
-with single-substitution coverage and workable pool sizes. 48 initial
-observations revealed at random, then 5 rounds of 24 — 168 wells in total —
-repeated over 5 seeds, with every strategy sharing the same initial set at each
-seed. Representation: `facebook/esm2_t12_35M_UR50D` pinned at revision
-`6fbf070e65b0b7291e7bbcd451118c216cff79d8`. A "hit" is the top decile of each
-assay's own measured values, a threshold fixed before the replay.
+Common protocol: 48 initial observations revealed at random, then 5 rounds of
+24, so 168 wells per campaign; 5 seeds, with every strategy sharing the same
+initial set at each seed; representation `facebook/esm2_t12_35M_UR50D` pinned
+at revision `6fbf070e65b0b7291e7bbcd451118c216cff79d8`; ProteinGym v1.1. A
+"hit" is a variant at or above the top decile of that assay's own measured
+values, fixed before the replay.
 
-| Assay | Variants | Reference |
-| --- | --- | --- |
-| AMIE_PSEAE_Wrenbeck_2017 (amidase) | 6,227 | 346 aa |
-| BLAT_ECOLX_Jacquier_2013 (β-lactamase) | 989 | 286 aa |
-| BLAT_ECOLX_Stiffler_2015 (β-lactamase) | 4,996 | 286 aa |
-| DYR_ECOLI_Thompson_2019 (DHFR) | 2,363 | 159 aa |
-| ESTA_BACSU_Nutschel_2020 (esterase) | 2,172 | 212 aa |
+### How to read the hit counts
 
-### Hits found in 168 wells, mean of 5 seeds
+A hit count only means something next to the **base rate** — the share of the
+whole pool that counts as a hit. Where many variants tie at a floor or ceiling
+value, the top-decile threshold can cover most of the pool, random selection
+then scores highly, and the metric separates nothing. Two assays here are like
+that (CcdB at 79%, one β-lactamase study at 38%); they are reported but
+excluded from the aggregate hit column, and `run_benchmarks.py` now prints the
+base rate and flags them automatically.
 
-| Assay | random | baseline | ESM-2 score | assay-trained | assay-trained +div |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| AMIE_PSEAE_Wrenbeck_2017 | 16.8 | 12.2 | **28.4** | 26.2 | 26.2 |
-| BLAT_ECOLX_Jacquier_2013 | 63.4 | 65.8 | **87.0** | 81.0 | 81.6 |
-| BLAT_ECOLX_Stiffler_2015 | 16.6 | 19.0 | 26.0 | **31.4** | 28.4 |
-| DYR_ECOLI_Thompson_2019 | 18.8 | 11.8 | **20.0** | 19.6 | 18.6 |
-| ESTA_BACSU_Nutschel_2020 | 19.6 | 21.0 | 42.6 | **46.2** | 34.8 |
-| **mean of per-assay means** | 27.0 | 26.0 | **40.8** | **40.9** | 37.9 |
+With a 10% base rate, random selection finds about 17 hits in 168 wells.
 
-### What that does and does not show
+### 1. Development set (five enzyme assays)
 
-- **The two ESM-2 methods find about 1.5× as many hits as random**, 40.8 and
-  40.9 against 27.0, averaged over assays.
-- **The one-hot baseline does not**: 26.0, slightly *below* random, and clearly
-  below it on two assays. With 48 initial measurements on pools of thousands,
-  most candidates carry substitutions the baseline has never seen, so it
-  predicts near the training mean for them. This is the case the baseline
-  exists to reveal, and here it says the protein-model representation is doing
-  real work.
-- **One assay shows nothing.** On DYR_ECOLI_Thompson_2019 every strategy lands
-  between 11.8 and 20.0 hits against 18.8 for random: no method beat chance,
-  and the baseline did worse than it. It is reported here rather than dropped.
-- **Diversity is not free.** The diversity variant found fewer hits than plain
-  ranking on four of five assays (37.9 against 40.9 overall). On this evidence
-  it is a constraint to reach for when you want spread, not a default.
-- **Five seeds is not many.** Counted per seed, the best-value-found metric
-  beat random in 1–5 seeds out of 5 depending on assay and method; the
-  differences in that metric are mostly within noise even where the hit counts
-  separate cleanly.
+These five were used while building the harness, so they are a demonstration
+that the pipeline produces sane numbers, not an evaluation.
 
-### A note on the metric that did not work
+| Assay | base rate | random | baseline | ESM-2 score | assay-trained | +diversity |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| AMIE_PSEAE_Wrenbeck_2017 | 10% | 16.8 | 12.2 | **28.4** | 26.2 | 26.2 |
+| BLAT_ECOLX_Jacquier_2013 | 38% ⚠ | 63.4 | 65.8 | 87.0 | 81.0 | 81.6 |
+| BLAT_ECOLX_Stiffler_2015 | 10% | 16.6 | 19.0 | 26.0 | **31.4** | 28.4 |
+| DYR_ECOLI_Thompson_2019 | 10% | 18.8 | 11.8 | **20.0** | 19.6 | 18.6 |
+| ESTA_BACSU_Nutschel_2020 | 10% | 19.6 | 21.0 | 42.6 | **46.2** | 34.8 |
+| **mean, usable thresholds** | | 18.0 | 16.0 | **29.3** | **30.9** | 27.0 |
 
-"Best value found" saturates at this budget. Expressed as a percentile of each
-assay's own pool, every strategy — random included — lands between the 96th and
-100th percentile, because 168 draws from a few thousand variants will find
-something near the top whatever you do. The aggregate therefore reports hit
-counts and within-assay percentiles only; raw assay values are never averaged
-across assays, since an esterase activity near 50 and a fitness near 1 do not
-belong in the same mean.
+The one-hot baseline came out *below* random. With 48 initial measurements on
+pools of thousands of single mutants, most candidates carry a substitution the
+baseline has never seen, so it predicts near the training mean for them. On
+DYR nothing beat random at all.
 
-### Reproducing it
+### 2. Held-out set (six assays, chosen before the run)
+
+Selected by a stated rule, not by eye: from the 119 ProteinGym substitution
+assays with 1,000–8,000 variants and a reference under 450 residues, excluding
+the five development assays, six were drawn with `numpy.default_rng(20261019)`.
+The protocol was written down before any of them ran.
+
+| Assay | base rate | random | baseline | ESM-2 score | assay-trained | +diversity |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CCDB_ECOLI_Tripathi_2016 | 79% ⚠ | 131.8 | 141.0 | 126.8 | 145.4 | 149.6 |
+| FKBP3_HUMAN_Tsuboyama_2023_2KFV | 10% | 16.4 | 15.2 | 11.4 | **28.4** | 28.4 |
+| KCNE1_HUMAN_Muhammad_2023_function | 10% | 15.6 | **33.8** | 31.6 | 15.6 | 17.0 |
+| NUSG_MYCTU_Tsuboyama_2023_2MI6 | 10% | 15.8 | 9.6 | 37.8 | **70.2** | 57.8 |
+| PTEN_HUMAN_Mighell_2018 | 10% | 16.6 | 16.2 | **31.4** | 21.4 | 21.4 |
+| RL40A_YEAST_Roscoe_2014 | 10% | 18.2 | 24.4 | **33.2** | 23.8 | 23.6 |
+| **mean, usable thresholds** | | 16.5 | 19.8 | 29.1 | **31.9** | 29.6 |
+
+The ordering survives the move to held-out data — assay-trained 31.9 and
+ESM-2 score 29.1 against 16.5 for random — but every method has at least one
+assay where it does no better than chance. The baseline loses to random on
+three of six, the pretrained score on two, and the assay-trained model ties it
+on KCNE1 while winning four-fold on NusG. No method wins everywhere.
+
+### 3. GFP: where the additive approximation breaks
+
+`GFP_AEQVI_Sarkisyan_2016`, 51,714 variants of which 50,630 carry **more than
+one substitution**. Every assay above is single-substitution only, so none of
+them tested the pretrained score's documented limit: it sums single-site
+log-ratios, which assumes substitutions act independently. On single mutants
+there is nothing to approximate. Here there is.
+
+| Strategy | hits in 168 wells | vs random, best value (5 seeds) |
+| --- | ---: | --- |
+| baseline (one-hot) | **51.6** | +0.034, won 3/5 seeds |
+| assay-trained +diversity | 23.2 | −0.017, won 2/5 |
+| assay-trained | 21.4 | −0.007, won 3/5 |
+| random | 18.8 | — |
+| ESM-2 score | **10.6** | −0.196, won **0/5** |
+
+**The pretrained score finished below random**, and lost on every seed. That is
+the additive approximation failing exactly where the method's own caveat says
+it should. Meanwhile the one-hot baseline — worst on the single-mutant assays —
+is the best method here by a factor of 2.7 over random, because 51,714 variants
+over a limited set of positions means it has seen nearly every substitution
+before.
+
+### What these runs support
+
+The headline is not that one method wins. It is that **the ranking of methods
+reverses between datasets**: the baseline was the worst method on the
+development assays and the best on GFP; the pretrained score was the best on
+several single-mutant assays and worse than random on GFP. A tool that picked a
+method once, globally, would be wrong half the time here.
+
+That is the case for evaluating per campaign, on the campaign's own held-out
+measurements, and for preferring the simpler method unless the evidence clears
+a stated bar — which is what AssayPilot does.
+
+### What they do not support
+
+- No claim about any assay not listed. Six held-out assays is a small sample,
+  and the spread between them is wide.
+- No comparison against other tools. EVOLVEpro and similar systems are not in
+  this table; adding one is the obvious next step.
+- No statistical significance claim. Five seeds, paired by initial set; most
+  per-assay differences in *best value found* sit inside that noise even where
+  hit counts separate cleanly.
+- Nothing about unseen sequences. These assays may overlap ESM-2's pretraining
+  data, so none of this measures generalisation to genuinely novel proteins.
+- Retrospective throughout: selection is restricted to variants the dataset
+  already measured.
+
+### Reproducing
 
 ```bash
-python scripts/fetch_proteingym.py --out data/proteingym \
-  --assay AMIE_PSEAE_Wrenbeck_2017 --assay BLAT_ECOLX_Jacquier_2013 \
-  --assay BLAT_ECOLX_Stiffler_2015 --assay DYR_ECOLI_Thompson_2019 \
-  --assay ESTA_BACSU_Nutschel_2020
-
+python scripts/fetch_proteingym.py --out data/proteingym --list     # 217 assays
+python scripts/fetch_proteingym.py --out data/proteingym --assay NUSG_MYCTU_Tsuboyama_2023_2MI6
 python scripts/run_benchmarks.py --data data/proteingym/campaigns --out results/ \
   --n-initial 48 --batch-size 24 --rounds 5 --seeds 0 1 2 3 4 \
   --representation esm2 --esm-revision 6fbf070e65b0b7291e7bbcd451118c216cff79d8
 ```
 
-Runtime on an M-series Mac, with embeddings cached between assays: about 25
-minutes for all five. The masked-marginal score costs one forward pass per
-mutated position of the reference (~3s per selection against ~0.4s for the
-embedding model), paid once per assay and then cached.
-
-These five assays were also the development set for the harness itself, so
-treat them as a demonstration that the pipeline produces sane numbers, not as
-an independent evaluation. A reporting run should use assays that were not
-used while building it.
+On an M-series Mac with embeddings cached: about 25 minutes for five
+single-mutant assays, about 20 for GFP once its 51,714 embeddings are computed
+(~9 minutes at ~100 sequences/s). The masked-marginal score costs one forward
+pass per mutated position of the reference, paid once per assay.
 
 ---
 
