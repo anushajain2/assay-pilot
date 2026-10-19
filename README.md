@@ -613,13 +613,21 @@ Public-data results exist: twelve ProteinGym assays in three runs — five used 
 the harness, six drawn at random by a rule fixed beforehand, and GFP as a deliberate case study.
 Each campaign gets 168 wells (48 initial, then 5 rounds of 24) over 5 seeds.
 
-On the six **held-out** assays the assay-trained model found 31.9 hits against 16.5 for random
-selection, with the pretrained ESM-2 score at 29.1 and the one-hot baseline at 19.8. But the
-useful finding is in the third run: **the ranking of methods reverses between datasets.** On
-GFP — 51,714 variants, 98% of them multi-substitution — the pretrained score came *last*, below
-random, losing on every seed, because it sums single-site terms and cannot represent epistasis;
-the one-hot baseline, worst on the single-mutant assays, came first by a factor of 2.7 over
-random. Every method has at least one assay where it does no better than chance.
+On the six **held-out** assays every method beat random selection (16.5 hits per 168 wells):
+the assay-trained model 31.9, the pretrained ESM-2 score 29.1, the one-hot baseline 19.8. Two
+findings matter more than those numbers.
+
+**The ranking of methods reverses between datasets.** On GFP — 51,714 variants, 98% of them
+multi-substitution — the pretrained score came *last*, below random, losing on every seed,
+because it sums single-site terms and cannot represent epistasis. The one-hot baseline, worst
+on the single-mutant assays, came first there by a factor of 2.7. Every method has at least one
+assay where it does no better than chance.
+
+**A reimplementation of EVOLVEpro beat AssayPilot's own methods**: 34.8 hits on the held-out set
+against 31.9, on the same embeddings, so the difference is the regression head rather than the
+representation. That is reported rather than buried, and the obvious response — adopting a
+random-forest head — is deliberately left to its own pre-registered evaluation instead of being
+decided by the benchmark that just measured it.
 
 That is the case for evaluating per campaign rather than picking a method once, globally — and
 it is what AssayPilot does. Full tables, base-rate caveats, and the commands are in

@@ -146,3 +146,62 @@ def test_a_binding_diversity_constraint_changes_the_outcome(simulated, replay_co
     assert diverse in pivot.columns
     # The constraint cannot be relaxed to fill the batch, so fewer experiments run.
     assert (pivot[diverse] < pivot[plain]).all()
+
+
+# ------------------------------------------------- the external comparison
+
+
+def test_the_external_baseline_is_included_and_labelled(simulated, replay_config):
+    """The benchmark has to answer 'better than an existing tool?', not only 'better
+    than guessing?' — and must say the comparison is a reimplementation."""
+    from assaypilot.benchmarks.baselines import EVOLVEPRO_SOURCE, EvolveProStyleMethod
+    from assaypilot.features.physchem import PhysicochemicalBackend
+
+    assert "evolvepro_style_rf" in strategy_names(replay_config, simulated.campaign)
+
+    info = EvolveProStyleMethod(PhysicochemicalBackend(n_bins=4)).info
+    assert info.kind == "external_reimplementation"
+    assert any("not the authors' code" in caveat for caveat in info.caveats)
+    assert any("diverse-medoid initialisation is not used" in c for c in info.caveats)
+    assert EVOLVEPRO_SOURCE in info.details["source"]
+
+
+def test_the_external_baseline_runs_in_a_replay(simulated, replay_config):
+    result = replay_campaign(simulated.campaign, simulated.measurements, replay_config)
+    assert "evolvepro_style_rf" in set(result.frame["strategy"])
+    rows = result.frame[result.frame["strategy"] == "evolvepro_style_rf"]
+    assert rows["batch_size"].le(replay_config.batch_size).all()
+    assert rows["best_selected"].notna().all()
+
+
+def test_it_can_be_switched_off(simulated, replay_config):
+    from dataclasses import replace
+
+    without = replace(replay_config, include_external_baselines=False)
+    assert "evolvepro_style_rf" not in strategy_names(without, simulated.campaign)
+
+
+def test_the_published_defaults_are_reproduced(simulated):
+    """The hyperparameters are the point of a reimplementation; pin them."""
+    import numpy as np
+
+    from assaypilot.benchmarks.baselines import EvolveProStyleMethod
+    from assaypilot.features.physchem import PhysicochemicalBackend
+
+    method = EvolveProStyleMethod(PhysicochemicalBackend(n_bins=4))
+    frame = simulated.measurements.head(40)
+    method.fit(frame["sequence"].tolist(), frame["value"].to_numpy(dtype=float))
+
+    model = method._model
+    assert model.n_estimators == 100
+    assert model.max_depth is None
+    assert model.min_samples_split == 2
+    assert model.min_samples_leaf == 1
+    assert model.max_features == 1.0
+    assert model.bootstrap is True
+    assert model.random_state == 1
+
+    # No preprocessing, as published: predictions come straight from the embeddings.
+    predictions = method.predict(frame["sequence"].tolist()[:5])
+    assert predictions.shape == (5,)
+    assert np.isfinite(predictions).all()

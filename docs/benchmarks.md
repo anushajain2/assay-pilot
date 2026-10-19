@@ -180,21 +180,23 @@ assays with 1,000–8,000 variants and a reference under 450 residues, excluding
 the five development assays, six were drawn with `numpy.default_rng(20261019)`.
 The protocol was written down before any of them ran.
 
-| Assay | base rate | random | baseline | ESM-2 score | assay-trained | +diversity |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| CCDB_ECOLI_Tripathi_2016 | 79% ⚠ | 131.8 | 141.0 | 126.8 | 145.4 | 149.6 |
-| FKBP3_HUMAN_Tsuboyama_2023_2KFV | 10% | 16.4 | 15.2 | 11.4 | **28.4** | 28.4 |
-| KCNE1_HUMAN_Muhammad_2023_function | 10% | 15.6 | **33.8** | 31.6 | 15.6 | 17.0 |
-| NUSG_MYCTU_Tsuboyama_2023_2MI6 | 10% | 15.8 | 9.6 | 37.8 | **70.2** | 57.8 |
-| PTEN_HUMAN_Mighell_2018 | 10% | 16.6 | 16.2 | **31.4** | 21.4 | 21.4 |
-| RL40A_YEAST_Roscoe_2014 | 10% | 18.2 | 24.4 | **33.2** | 23.8 | 23.6 |
-| **mean, usable thresholds** | | 16.5 | 19.8 | 29.1 | **31.9** | 29.6 |
+| Assay | base rate | random | baseline | ESM-2 score | assay-trained | +diversity | EVOLVEpro-style |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CCDB_ECOLI_Tripathi_2016 | 79% ⚠ | 131.8 | 141.0 | 126.8 | 145.4 | 149.6 | 149.8 |
+| FKBP3_HUMAN_Tsuboyama_2023_2KFV | 10% | 16.4 | 15.2 | 11.4 | 28.4 | 28.4 | **36.2** |
+| KCNE1_HUMAN_Muhammad_2023_function | 10% | 15.6 | **33.8** | 31.6 | 15.6 | 17.0 | 24.2 |
+| NUSG_MYCTU_Tsuboyama_2023_2MI6 | 10% | 15.8 | 9.6 | 37.8 | **70.2** | 57.8 | 61.2 |
+| PTEN_HUMAN_Mighell_2018 | 10% | 16.6 | 16.2 | **31.4** | 21.4 | 21.4 | 25.0 |
+| RL40A_YEAST_Roscoe_2014 | 10% | 18.2 | 24.4 | **33.2** | 23.8 | 23.6 | 27.6 |
+| **mean, usable thresholds** | | 16.5 | 19.8 | 29.1 | 31.9 | 29.6 | **34.8** |
 
-The ordering survives the move to held-out data — assay-trained 31.9 and
-ESM-2 score 29.1 against 16.5 for random — but every method has at least one
-assay where it does no better than chance. The baseline loses to random on
-three of six, the pretrained score on two, and the assay-trained model ties it
-on KCNE1 while winning four-fold on NusG. No method wins everywhere.
+Every method beats random on average, and every method has at least one assay
+where it does no better than chance. The baseline loses to random on three of
+six, the pretrained score on two, and the assay-trained model ties it on KCNE1
+while winning four-fold on NusG.
+
+The last column is the one to look at: see
+[Against an existing tool](#4-against-an-existing-tool).
 
 ### 3. GFP: where the additive approximation breaks
 
@@ -207,6 +209,7 @@ there is nothing to approximate. Here there is.
 | Strategy | hits in 168 wells | vs random, best value (5 seeds) |
 | --- | ---: | --- |
 | baseline (one-hot) | **51.6** | +0.034, won 3/5 seeds |
+| EVOLVEpro-style | 40.4 | +0.028, won 4/5 |
 | assay-trained +diversity | 23.2 | −0.017, won 2/5 |
 | assay-trained | 21.4 | −0.007, won 3/5 |
 | random | 18.8 | — |
@@ -219,9 +222,49 @@ is the best method here by a factor of 2.7 over random, because 51,714 variants
 over a limited set of positions means it has seen nearly every substitution
 before.
 
+### 4. Against an existing tool
+
+The tables above compare AssayPilot's methods with random selection, which is
+the floor, not the bar. The question that matters is whether they beat the
+tool a researcher would otherwise reach for. So the replay gained a
+reimplementation of **EVOLVEpro**'s published procedure: a random forest
+(`n_estimators=100`, no feature scaling, no dimensionality reduction) on
+protein-language-model embeddings, selecting greedily by predicted activity,
+taken from `evolvepro/src/model.py` and the paper (doi:10.1126/science.adr6006).
+
+**It beat AssayPilot's own methods.** On the held-out set it found 34.8 hits
+per 168 wells against 31.9 for the assay-trained model and 29.1 for the
+pretrained score. On GFP it found 40.4 against 21.4 for the assay-trained
+model. It was also the fastest of the fitted methods, at 0.32 s per selection.
+
+Both run on **the same ESM-2 embeddings**, so this is not a statement about
+representations. It isolates the regression head and says that on these
+twelve assays a random forest on frozen embeddings generalises better from
+~50–170 measurements than the ridge-with-PCA head AssayPilot ships.
+
+What the comparison does *not* establish:
+
+- It is a reimplementation of a published procedure, not the authors' code.
+  A result in EVOLVEpro's favour is the safer direction for that caveat to
+  cut, but it still holds: their defaults are reproduced, their pipeline is
+  not run.
+- EVOLVEpro can seed its first round with k-medoid "diverse medoids" over
+  PCA'd embeddings. The replay gives every strategy the same randomly drawn
+  initial set so that seeds stay paired, so that part of their method is not
+  exercised at all.
+- Twelve assays, five seeds. The per-seed counts show most *best-value*
+  differences still sitting inside the noise.
+
+The obvious consequence — evaluating a random-forest head for AssayPilot's own
+suite — is deliberately **not** done here. Swapping a component because it won
+on the benchmark that just measured it is how a comparison suite stops meaning
+anything; the change belongs in its own pre-registered evaluation, ideally on
+assays none of these runs touched.
+
 ### What these runs support
 
-The headline is not that one method wins. It is that **the ranking of methods
+The headline is not that one of AssayPilot's methods wins — a reimplementation
+of someone else's method does, on average. It is that **the ranking of methods
 reverses between datasets**: the baseline was the worst method on the
 development assays and the best on GFP; the pretrained score was the best on
 several single-mutant assays and worse than random on GFP. A tool that picked a
@@ -235,8 +278,9 @@ a stated bar — which is what AssayPilot does.
 
 - No claim about any assay not listed. Six held-out assays is a small sample,
   and the spread between them is wide.
-- No comparison against other tools. EVOLVEpro and similar systems are not in
-  this table; adding one is the obvious next step.
+- No comparison against other tools *as their authors would run them*. The
+  EVOLVEpro column is a reimplementation on a shared representation, not their
+  pipeline end to end.
 - No statistical significance claim. Five seeds, paired by initial set; most
   per-assay differences in *best value found* sit inside that noise even where
   hit counts separate cleanly.

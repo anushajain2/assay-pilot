@@ -27,8 +27,15 @@ import pandas as pd
 
 from ..campaign import Campaign
 from ..models.base import Method
-from ..models.registry import SuiteConfig, build_cache, build_methods, split_by_availability
+from ..models.registry import (
+    SuiteConfig,
+    build_backend,
+    build_cache,
+    build_methods,
+    split_by_availability,
+)
 from ..selection.policies import DiversityPolicy, SelectionPolicy, TopRankedPolicy
+from .baselines import EvolveProStyleMethod
 
 #: Printed beside every replay table.
 REPLAY_CAVEAT = (
@@ -49,6 +56,9 @@ class ReplayConfig:
     suite: SuiteConfig = field(default_factory=lambda: SuiteConfig(representation="physchem"))
     include_random: bool = True
     include_diversity_variant: bool = True
+    #: Add a reimplementation of EVOLVEpro's procedure, so the table answers
+    #: "better than an existing tool?" and not only "better than guessing?".
+    include_external_baselines: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         data = {
@@ -59,6 +69,7 @@ class ReplayConfig:
             "diversity_min_distance": self.diversity_min_distance,
             "include_random": self.include_random,
             "include_diversity_variant": self.include_diversity_variant,
+            "include_external_baselines": self.include_external_baselines,
             "suite": self.suite.to_dict(),
         }
         return data
@@ -165,19 +176,8 @@ def replay_campaign(
     cache = build_cache(config.suite)
     methods, unavailable = split_by_availability(build_methods(campaign, config.suite, cache=cache))
 
-    strategies: dict[str, dict[str, Any]] = {}
-    if config.include_random:
-        strategies["random"] = {"kind": "random"}
-    for method in methods:
-        strategies[method.info.key] = {"kind": "method", "method": method, "policy": "top_ranked"}
-    if config.include_diversity_variant and config.diversity_min_distance:
-        trained = [m for m in methods if m.info.kind == "assay_trained"]
-        for method in trained:
-            strategies[f"{method.info.key}+diversity"] = {
-                "kind": "method",
-                "method": method,
-                "policy": "diversity",
-            }
+    strategies, config_unavailable = build_strategies(campaign, config, cache=cache)
+    unavailable = {**unavailable, **config_unavailable}
 
     rows: list[dict[str, Any]] = []
 
@@ -309,11 +309,54 @@ def compare_strategies(
     return pd.DataFrame(rows).sort_values("mean_difference", ascending=False).reset_index(drop=True)
 
 
+def build_strategies(
+    campaign: Campaign,
+    config: ReplayConfig,
+    *,
+    cache: Any = None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    """The strategies a replay will run, and any it had to leave out.
+
+    One builder serves both the replay and :func:`strategy_names`: when those
+    were separate, adding a strategy to the replay silently left the name list
+    behind, and the test that compares them could not see the difference.
+    """
+    cache = cache if cache is not None else build_cache(config.suite)
+    methods, unavailable = split_by_availability(build_methods(campaign, config.suite, cache=cache))
+
+    strategies: dict[str, dict[str, Any]] = {}
+    if config.include_random:
+        strategies["random"] = {"kind": "random"}
+    for method in methods:
+        strategies[method.info.key] = {"kind": "method", "method": method, "policy": "top_ranked"}
+
+    if config.include_diversity_variant and config.diversity_min_distance:
+        for method in [m for m in methods if m.info.kind == "assay_trained"]:
+            strategies[f"{method.info.key}+diversity"] = {
+                "kind": "method",
+                "method": method,
+                "policy": "diversity",
+            }
+
+    if config.include_external_baselines:
+        # Shares the embedding backend with AssayPilot's own methods, so the
+        # comparison is about the regression head and the selection rule
+        # rather than about which checkpoint each side happened to use.
+        external = EvolveProStyleMethod(build_backend(config.suite), cache=cache)
+        available, reason = external.is_available()
+        if available:
+            strategies[external.info.key] = {
+                "kind": "method",
+                "method": external,
+                "policy": "top_ranked",
+            }
+        else:
+            unavailable[external.info.key] = reason
+
+    return strategies, unavailable
+
+
 def strategy_names(config: ReplayConfig, campaign: Campaign) -> Sequence[str]:
     """Names of the strategies a replay would run with this configuration."""
-    methods, _ = split_by_availability(build_methods(campaign, config.suite))
-    names = ["random"] if config.include_random else []
-    names += [m.info.key for m in methods]
-    if config.include_diversity_variant and config.diversity_min_distance:
-        names += [f"{m.info.key}+diversity" for m in methods if m.info.kind == "assay_trained"]
-    return names
+    strategies, _ = build_strategies(campaign, config)
+    return list(strategies)
