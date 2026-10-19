@@ -99,6 +99,32 @@ verbatim in the report and stored in the manifest.
 
 ---
 
+## 5a. A metric that cannot separate methods is not used to choose one
+
+**Claimed.** Hit rate drives the decision only when it can discriminate: a
+threshold declared in advance, a held-out partition at least twice the batch
+size, no more than 25% of measured variants already clearing the threshold,
+and at least five hits held out. Otherwise rank correlation over the whole
+held-out set is used, and the report, the warnings and the manifest all say
+which condition failed.
+
+**Why.** A success threshold that most measured variants already clear makes
+every method look good — random selection included — because the base rate is
+the floor and 1 is the ceiling. Public data makes the failure concrete: in
+`CCDB_ECOLI_Tripathi_2016`, ties at a floor value put 79% of the pool above
+the top decile, and random selection scored 131.8 hits out of 168 wells. A
+number like that is not evidence of anything.
+
+**Enforced by.** `choose_primary_metric` and `MeasurementSet.hit_base_rate`;
+`plan_batch` raises a warning whenever a declared threshold could not be used.
+
+**Tested by.** `tests/test_compare.py::test_a_threshold_most_variants_clear_cannot_drive_the_decision`,
+`::test_too_few_held_out_hits_cannot_drive_the_decision`,
+`tests/test_pipeline.py::test_a_threshold_most_variants_clear_is_flagged_in_the_plan`,
+`::test_a_usable_threshold_still_drives_the_decision`.
+
+---
+
 ## 6. Weak evidence is labelled, not dressed up
 
 **Claimed.** A plan is labelled `supported` only when the split was an

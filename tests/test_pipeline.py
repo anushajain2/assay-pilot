@@ -424,3 +424,51 @@ def test_unseen_substitutions_are_counted_against_all_measurements(
             if (s.position, s.mutant) not in measured
         )
         assert int(row.n_unseen_substitutions) == expected
+
+
+def test_a_threshold_most_variants_clear_is_flagged_in_the_plan(simulated_inputs, physchem_suite):
+    """The CcdB failure, in the product: a hit rate that cannot separate anything.
+
+    A researcher who sets an optimistic success threshold — one most of their
+    measured variants already clear — must not be handed a hit rate that looks
+    like evidence. The plan falls back to rank correlation and says why.
+    """
+    campaign, measurements, candidates = simulated_inputs
+
+    # A threshold at the 10th percentile: 90% of measured variants clear it.
+    # The batch is small relative to the held-out partitions, so the base rate
+    # is the rule under test rather than the batch-size one.
+    lenient = float(measurements.frame["value"].quantile(0.1))
+    easy = campaign.__class__.from_dict({**campaign.to_dict(), "success_threshold": lenient})
+    settings = SelectionSettings(batch_size=8)
+
+    plan = plan_batch(
+        easy, candidates, measurements, settings=settings, suite=physchem_suite, n_bootstrap=20
+    )
+
+    assert plan.evaluation is not None
+    assert plan.evaluation.hit_base_rate is not None
+    assert plan.evaluation.hit_base_rate > 0.25
+    assert plan.evaluation.primary_metric == "spearman"
+    assert "already clear the success threshold" in plan.evaluation.primary_metric_reason
+    assert any("Hit rate was not used" in warning for warning in plan.warnings)
+
+    from assaypilot.reporting.html import render_report
+
+    assert "already clear the success threshold" in render_report(plan)
+
+
+def test_a_usable_threshold_still_drives_the_decision(simulated_inputs, physchem_suite):
+    """The fallback must not fire on a threshold that works."""
+    campaign, measurements, candidates = simulated_inputs
+    strict = float(measurements.frame["value"].quantile(0.85))
+    tuned = campaign.__class__.from_dict({**campaign.to_dict(), "success_threshold": strict})
+    settings = SelectionSettings(batch_size=8)
+
+    plan = plan_batch(
+        tuned, candidates, measurements, settings=settings, suite=physchem_suite, n_bootstrap=20
+    )
+
+    assert plan.evaluation is not None
+    assert plan.evaluation.primary_metric == "hit_rate_at_k"
+    assert not any("Hit rate was not used" in warning for warning in plan.warnings)

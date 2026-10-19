@@ -186,6 +186,10 @@ class EvaluationResult:
     comparisons: list[PairedComparison]
     recommendation: Recommendation
     random_reference: dict[str, float]
+    #: Why this metric drives the decision, in words, for the report to repeat.
+    primary_metric_reason: str = ""
+    #: Share of measured variants that already clear the success threshold.
+    hit_base_rate: float | None = None
     unavailable: dict[str, str] = field(default_factory=dict)
     predictions: list[SplitPrediction] = field(default_factory=list)
     n_bootstrap: int = 1000
@@ -205,6 +209,8 @@ class EvaluationResult:
         return {
             "split_plan": self.split_plan.to_dict(),
             "primary_metric": self.primary_metric,
+            "primary_metric_reason": self.primary_metric_reason,
+            "hit_base_rate": self.hit_base_rate,
             "k": self.k,
             "methods": {k: s.to_dict() for k, s in self.summaries.items()},
             "comparisons": [c.to_dict() for c in self.comparisons],
@@ -469,7 +475,7 @@ def evaluate_methods(
     batch_size = k if k is not None else campaign.selection.batch_size
     # The threshold is mapped into the measurements' value space once, so a
     # transformed assay cannot silently redefine what counts as a hit.
-    threshold = measurements.threshold_in_value_space()
+    threshold = measurements.threshold_in_value_space(campaign)
 
     ordered = sorted(methods, key=lambda m: (m.info.complexity, m.info.key))
     ordered_keys = [m.info.key for m in ordered]
@@ -485,11 +491,25 @@ def evaluate_methods(
     # checked per split: a pooled row count across splits can clear the bar
     # while every individual fold is almost entirely top-batch.
     smallest_test = min(s.n_test for s in split_plan.splits)
-    primary_metric = choose_primary_metric(
+
+    # A hit rate is only meaningful against the share of measured variants that
+    # already clear the threshold, and against how many hits are actually held
+    # out. Both are computed from the data, before anything is fitted.
+    hit_base_rate = measurements.hit_base_rate(campaign)
+    hits_per_split = []
+    if threshold is not None:
+        for split in split_plan.splits:
+            test_values = measurements.frame.iloc[split.test_index]["value"].to_numpy(float)
+            flags = measurements.is_hit_array(test_values, campaign=campaign)
+            hits_per_split.append(int(flags.sum()) if flags is not None else 0)
+    metric_choice = choose_primary_metric(
         has_threshold=threshold is not None,
         n_test=smallest_test,
         k=k_used,
+        hit_base_rate=hit_base_rate,
+        n_hits_in_test=min(hits_per_split) if hits_per_split else None,
     )
+    primary_metric = metric_choice.metric
 
     per_split_metrics: dict[str, dict[str, MetricValues]] = {key: {} for key in ordered_keys}
     fit_details: dict[str, dict[str, Any]] = {key: {} for key in ordered_keys}
@@ -611,6 +631,8 @@ def evaluate_methods(
         campaign=campaign,
         split_plan=split_plan,
         primary_metric=primary_metric,
+        primary_metric_reason=metric_choice.reason,
+        hit_base_rate=hit_base_rate,
         k=k_used,
         summaries=summaries,
         comparisons=list(comparisons_by_pair.values()),

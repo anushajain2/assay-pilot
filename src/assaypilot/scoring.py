@@ -169,11 +169,13 @@ def score_round(
         # The threshold is mapped into whatever value space the new round was
         # loaded in, so a transformed round is not compared against a raw
         # threshold.
-        hit_flags = new_measurements.is_hit_array(matched["measured_value"].to_numpy(dtype=float))
+        hit_flags = new_measurements.is_hit_array(
+            matched["measured_value"].to_numpy(dtype=float), campaign=campaign
+        )
         if hit_flags is not None:
             metrics["n_hits"] = int(hit_flags.sum())
             metrics["hit_rate"] = float(hit_flags.mean())
-            metrics["threshold_used"] = new_measurements.threshold_in_value_space()
+            metrics["threshold_used"] = new_measurements.threshold_in_value_space(campaign)
             metrics["threshold_space"] = new_measurements.value_units()
         elif campaign.success_threshold is None:
             notes.append(

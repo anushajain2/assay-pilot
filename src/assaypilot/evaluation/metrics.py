@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 from scipy import stats
@@ -180,14 +180,94 @@ def compute_metrics(
     return MetricValues(values=values, k=int(k), n_test=int(len(true)))
 
 
-def choose_primary_metric(*, has_threshold: bool, n_test: int, k: int) -> str:
-    """Pick the metric the recommendation is based on.
+#: Above this share of measured variants clearing the success threshold, hit
+#: rate stops separating methods: random selection already scores near the base
+#: rate and the ceiling is 1, so every method lands in a narrow band.
+MAX_HIT_BASE_RATE = 0.25
 
-    Hit rate is the most decision-shaped metric, but it is unusable when no
-    success threshold was defined in advance, and unstable when the top batch
-    is a large share of a small held-out set. In those cases rank correlation
-    over the full held-out set is the more reliable basis for a recommendation.
+#: Below this many hits in the smallest held-out partition, hit rate is mostly
+#: noise — a single variant moving in or out swings it.
+MIN_HITS_IN_TEST = 5
+
+
+class MetricChoice(NamedTuple):
+    """Which metric drives the decision, and why that one."""
+
+    metric: str
+    reason: str
+    hit_base_rate: float | None = None
+
+    @property
+    def fell_back(self) -> bool:
+        """True when a success threshold existed but hit rate was not usable."""
+        return self.metric != "hit_rate_at_k" and self.hit_base_rate is not None
+
+
+def choose_primary_metric(
+    *,
+    has_threshold: bool,
+    n_test: int,
+    k: int,
+    hit_base_rate: float | None = None,
+    n_hits_in_test: int | None = None,
+) -> MetricChoice:
+    """Pick the metric the recommendation is based on, and say why.
+
+    Hit rate is the most decision-shaped metric, but it only separates methods
+    under conditions worth stating:
+
+    * a success threshold has to exist, and to have been declared in advance;
+    * the held-out set has to be large enough relative to the batch, or the
+      top batch is most of it;
+    * the threshold has to isolate a *top slice*. If most measured variants
+      already clear it — which happens when values pile up at a ceiling, or
+      when the threshold was set optimistically — then random selection scores
+      near the base rate too, and the number cannot distinguish anything;
+    * there have to be enough hits held out to count.
+
+    When any of those fail, rank correlation over the whole held-out set is
+    the more reliable basis, and the returned reason says which one failed so
+    the report can repeat it.
     """
-    if has_threshold and n_test >= 2 * max(k, 1):
-        return "hit_rate_at_k"
-    return "spearman"
+    if not has_threshold:
+        return MetricChoice(
+            "spearman",
+            "no success threshold is defined for this campaign, so no hit rate can be"
+            " computed; the ranking of all held-out variants is used instead",
+        )
+    if n_test < 2 * max(k, 1):
+        return MetricChoice(
+            "spearman",
+            f"the batch of {k} is more than half the smallest held-out partition"
+            f" ({n_test} measurements), so a hit rate over the top batch would be"
+            " near-constant; the ranking of all held-out variants is used instead",
+            hit_base_rate,
+        )
+    if hit_base_rate is not None and hit_base_rate > MAX_HIT_BASE_RATE:
+        return MetricChoice(
+            "spearman",
+            f"{hit_base_rate:.0%} of the measured variants already clear the success"
+            " threshold, so a hit rate cannot separate methods — selecting at random"
+            f" would score about {hit_base_rate:.0%} too. The ranking of all held-out"
+            " variants is used instead. Consider a stricter threshold if hit rate is the"
+            " number you care about.",
+            hit_base_rate,
+        )
+    if n_hits_in_test is not None and n_hits_in_test < MIN_HITS_IN_TEST:
+        return MetricChoice(
+            "spearman",
+            f"only {n_hits_in_test} held-out measurement(s) clear the success threshold,"
+            f" fewer than the {MIN_HITS_IN_TEST} needed for a hit rate to be more than"
+            " noise; the ranking of all held-out variants is used instead",
+            hit_base_rate,
+        )
+    return MetricChoice(
+        "hit_rate_at_k",
+        f"a success threshold is defined and {hit_base_rate:.0%} of measured variants clear"
+        " it, so the share of the top batch that are hits is both computable and"
+        " discriminating"
+        if hit_base_rate is not None
+        else "a success threshold is defined and the held-out set is large enough for a hit"
+        " rate over the top batch",
+        hit_base_rate,
+    )

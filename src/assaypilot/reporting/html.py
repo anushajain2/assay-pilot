@@ -155,7 +155,7 @@ _TEMPLATE = """<!doctype html>
 {{ comparison_table }}
 </div>
 <p class="small muted">
-  Primary metric for the decision: {{ primary_metric_name }}.
+  Primary metric for the decision: {{ primary_metric_name }} — {{ primary_metric_reason }}
   Values are means across {{ n_splits }} split(s); the ± figure is the standard deviation across
   splits, not a confidence interval. Random selection of the same number of variants from the
   same held-out set would have reached a best value of
@@ -571,6 +571,7 @@ def build_context(plan: ExperimentPlan) -> dict[str, Any]:
                 "primary_metric_name": HUMAN_NAMES.get(
                     evaluation.primary_metric, evaluation.primary_metric
                 ),
+                "primary_metric_reason": evaluation.primary_metric_reason,
                 "random_best": _fmt(evaluation.random_reference.get("best_at_k")),
                 "random_hit_rate": _fmt(evaluation.random_reference.get("hit_rate_at_k")),
                 "recommendation_rule": evaluation.recommendation.rule,

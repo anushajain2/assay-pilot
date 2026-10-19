@@ -232,8 +232,13 @@ class MeasurementSet:
             )
         return replace(self, frame=regression, report=report)
 
-    def threshold_in_value_space(self) -> float | None:
+    def threshold_in_value_space(self, campaign: Campaign | None = None) -> float | None:
         """The campaign's success threshold, mapped through the applied transform.
+
+        ``campaign`` overrides the one these measurements were loaded with, for
+        callers that were handed a campaign separately — a replay that sets a
+        threshold from a quantile, say. Without it the two could disagree and
+        the stated threshold would silently lose to the stored one.
 
         ``value`` may have been log-transformed or z-scored while
         ``campaign.success_threshold`` stays on the scale the researcher
@@ -244,7 +249,8 @@ class MeasurementSet:
         is undefined at the threshold (a non-positive threshold under a log
         transform) — in which case no hit rate is reported at all.
         """
-        threshold = self.campaign.success_threshold
+        campaign = campaign or self.campaign
+        threshold = campaign.success_threshold
         if threshold is None:
             return None
         kind = self.transform
@@ -274,13 +280,30 @@ class MeasurementSet:
             return f"z-score of {units}"
         return f"{self.transform}({units})"
 
-    def is_hit_array(self, values: Sequence[float]) -> np.ndarray | None:
+    def hit_base_rate(self, campaign: Campaign | None = None) -> float | None:
+        """Share of distinct measured sequences that clear the success threshold.
+
+        This is what makes a hit rate interpretable. If 70% of what has already
+        been measured counts as a hit, then a batch that is 70% hits means
+        nothing — random selection would manage the same. Averaging replicates
+        first keeps a heavily-replicated variant from counting several times.
+        """
+        if self.frame.empty:
+            return None
+        per_sequence = self.frame.groupby("seq_hash")["value"].mean().to_numpy(dtype=float)
+        flags = self.is_hit_array(per_sequence, campaign=campaign)
+        return None if flags is None else float(flags.mean())
+
+    def is_hit_array(
+        self, values: Sequence[float], *, campaign: Campaign | None = None
+    ) -> np.ndarray | None:
         """Hit flags for values in this set's value space, or ``None`` with no threshold."""
-        threshold = self.threshold_in_value_space()
+        campaign = campaign or self.campaign
+        threshold = self.threshold_in_value_space(campaign)
         if threshold is None:
             return None
         array = np.asarray(values, dtype=float)
-        if self.campaign.objective == "maximize":
+        if campaign.objective == "maximize":
             return array >= threshold
         return array <= threshold
 

@@ -123,9 +123,14 @@ All are reported next to a **random reference** — the expectation of picking *
 at random from the same held-out set — so a positive-looking number can be
 compared against doing nothing clever.
 
-The primary metric (hit rate when a threshold exists and the **smallest** split
-is at least twice the batch size; otherwise rank correlation) is fixed **before
-any model is fitted**, so the choice cannot follow the results. The smallest
+The primary metric is fixed **before any model is fitted**, so the choice
+cannot follow the results. Hit rate is used only when it can actually separate
+methods — a threshold declared in advance, the smallest split at least twice
+the batch size, at most 25% of measured variants already clearing the
+threshold, and at least five hits held out. A threshold that most measured
+variants clear puts random selection near the ceiling too, so the number stops
+meaning anything; in that case rank correlation is used and the report says
+why. Otherwise rank correlation. The smallest
 split governs, because a pooled row count can clear the bar while every
 individual fold is almost entirely top-batch — which makes the hit rate nearly
 constant by construction. Every split is also scored at the same budget `k`, so

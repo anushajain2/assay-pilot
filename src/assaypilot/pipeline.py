@@ -260,6 +260,12 @@ def plan_batch(
         chosen_key = evaluation.recommendation.method_key
         chosen_method = next(m for m in usable if m.info.key == chosen_key)
         warnings.extend(split_plan.warnings)
+        # A threshold the researcher declared, which then could not be used,
+        # is worth saying out loud: they may want to set a stricter one.
+        if campaign.success_threshold is not None and evaluation.primary_metric != "hit_rate_at_k":
+            warnings.append(
+                f"Hit rate was not used to choose a method: {evaluation.primary_metric_reason}"
+            )
     elif has_labels:
         # Labels exist but no split could be built: fall back to the simplest
         # label-using method and say the ranking is unvalidated.

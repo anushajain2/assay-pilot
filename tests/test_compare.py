@@ -92,10 +92,48 @@ def test_random_reference_is_between_min_and_max():
 
 
 def test_primary_metric_requires_a_predeclared_threshold():
-    assert choose_primary_metric(has_threshold=False, n_test=100, k=10) == "spearman"
-    assert choose_primary_metric(has_threshold=True, n_test=100, k=10) == "hit_rate_at_k"
+    no_threshold = choose_primary_metric(has_threshold=False, n_test=100, k=10)
+    assert no_threshold.metric == "spearman"
+    assert "no success threshold" in no_threshold.reason
+
+    usable = choose_primary_metric(
+        has_threshold=True, n_test=100, k=10, hit_base_rate=0.1, n_hits_in_test=10
+    )
+    assert usable.metric == "hit_rate_at_k"
+
     # Too few held-out examples relative to the batch: hit rate would be unstable.
-    assert choose_primary_metric(has_threshold=True, n_test=12, k=10) == "spearman"
+    crowded = choose_primary_metric(has_threshold=True, n_test=12, k=10)
+    assert crowded.metric == "spearman"
+    assert "more than half" in crowded.reason
+
+
+def test_a_threshold_most_variants_clear_cannot_drive_the_decision():
+    """The CcdB case: if 79% of measured variants are hits, so is a random batch."""
+    choice = choose_primary_metric(
+        has_threshold=True, n_test=200, k=24, hit_base_rate=0.79, n_hits_in_test=150
+    )
+    assert choice.metric == "spearman"
+    assert choice.fell_back
+    assert "79% of the measured variants already clear" in choice.reason
+    assert "stricter threshold" in choice.reason
+
+
+def test_too_few_held_out_hits_cannot_drive_the_decision():
+    choice = choose_primary_metric(
+        has_threshold=True, n_test=200, k=24, hit_base_rate=0.01, n_hits_in_test=2
+    )
+    assert choice.metric == "spearman"
+    assert choice.fell_back
+    assert "only 2 held-out measurement(s) clear" in choice.reason
+
+
+def test_a_usable_threshold_is_reported_as_such():
+    choice = choose_primary_metric(
+        has_threshold=True, n_test=200, k=24, hit_base_rate=0.1, n_hits_in_test=20
+    )
+    assert choice.metric == "hit_rate_at_k"
+    assert not choice.fell_back
+    assert "10% of measured variants clear it" in choice.reason
 
 
 def test_compute_metrics_reports_nan_without_hit_flags():
@@ -251,11 +289,15 @@ def _threshold_campaign(campaign, threshold: float):
 def test_a_backwards_method_is_never_supported_under_a_hit_rate_metric(campaign):
     """The better-than-chance gate must apply to whichever metric drove the decision.
 
-    With a success threshold the primary metric is hit rate, and a method that
-    orders variants perfectly backwards must not be reported as supported.
+    With a usable success threshold the primary metric is hit rate, and a
+    method that orders variants perfectly backwards must not be reported as
+    supported.
     """
-    measurements = _measurements_with_rounds(campaign, n=120, seed=3)
-    with_threshold = _threshold_campaign(campaign, 1.0)
+    measurements = _measurements_with_rounds(campaign, n=180, seed=3)
+    # The 80th percentile: high enough to be a real bar, low enough that each
+    # held-out round contains enough hits for the metric to be usable.
+    threshold = float(measurements.frame["value"].quantile(0.8))
+    with_threshold = _threshold_campaign(campaign, threshold)
     plan = choose_split_plan(measurements)
     truth = dict(zip(measurements.frame["sequence"], measurements.frame["value"], strict=True))
 
@@ -277,8 +319,9 @@ def test_a_backwards_method_is_never_supported_under_a_hit_rate_metric(campaign)
 
 
 def test_chance_level_for_hit_rate_is_the_random_reference(campaign):
-    measurements = _measurements_with_rounds(campaign, n=120, seed=4)
-    with_threshold = _threshold_campaign(campaign, 1.0)
+    measurements = _measurements_with_rounds(campaign, n=180, seed=4)
+    threshold = float(measurements.frame["value"].quantile(0.8))
+    with_threshold = _threshold_campaign(campaign, threshold)
     plan = choose_split_plan(measurements)
     truth = dict(zip(measurements.frame["sequence"], measurements.frame["value"], strict=True))
 
