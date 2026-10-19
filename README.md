@@ -623,11 +623,12 @@ because it sums single-site terms and cannot represent epistasis. The one-hot ba
 on the single-mutant assays, came first there by a factor of 2.7. Every method has at least one
 assay where it does no better than chance.
 
-**A reimplementation of EVOLVEpro beat AssayPilot's own methods**: 34.8 hits on the held-out set
-against 31.9, on the same embeddings, so the difference is the regression head rather than the
-representation. That is reported rather than buried, and the obvious response — adopting a
-random-forest head — is deliberately left to its own pre-registered evaluation instead of being
-decided by the benchmark that just measured it.
+**An outside comparison holds its own.** A reimplementation of EVOLVEpro's published procedure
+scores 34.8 hits against AssayPilot's 31.9 on the held-out set — but paired across assays and
+seeds that difference is +3.0 with a 95% interval of −0.1 to +6.2, so by the bar AssayPilot
+sets for its own methods the two are *not distinguishable*. On GFP it clearly beats our
+assay-trained model, and the one-hot baseline clearly beats it in turn. Both run on the same
+embeddings, so the difference is the regression head, not the representation.
 
 That is the case for evaluating per campaign rather than picking a method once, globally — and
 it is what AssayPilot does. Full tables, base-rate caveats, and the commands are in

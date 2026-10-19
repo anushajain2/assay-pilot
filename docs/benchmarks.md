@@ -195,8 +195,8 @@ where it does no better than chance. The baseline loses to random on three of
 six, the pretrained score on two, and the assay-trained model ties it on KCNE1
 while winning four-fold on NusG.
 
-The last column is the one to look at: see
-[Against an existing tool](#4-against-an-existing-tool).
+The last column is an outside comparison rather than one of AssayPilot's
+methods: see [Against an existing tool](#4-against-an-existing-tool).
 
 ### 3. GFP: where the additive approximation breaks
 
@@ -232,39 +232,58 @@ reimplementation of **EVOLVEpro**'s published procedure: a random forest
 protein-language-model embeddings, selecting greedily by predicted activity,
 taken from `evolvepro/src/model.py` and the paper (doi:10.1126/science.adr6006).
 
-**It beat AssayPilot's own methods.** On the held-out set it found 34.8 hits
-per 168 wells against 31.9 for the assay-trained model and 29.1 for the
-pretrained score. On GFP it found 40.4 against 21.4 for the assay-trained
-model. It was also the fastest of the fitted methods, at 0.32 s per selection.
+Point estimates are not a verdict, so every pair below is a paired bootstrap
+over the 25 assay–seed combinations with a usable threshold — the same rule
+the product applies to its own methods: a difference counts only when the 95%
+interval excludes zero.
 
-Both run on **the same ESM-2 embeddings**, so this is not a statement about
-representations. It isolates the regression head and says that on these
-twelve assays a random forest on frozen embeddings generalises better from
-~50–170 measurements than the ridge-with-PCA head AssayPilot ships.
+| Comparison | difference in hits per 168 wells | 95% interval | verdict |
+| --- | ---: | --- | --- |
+| EVOLVEpro-style vs random | +18.3 | +12.9 to +24.6 | supported |
+| assay-trained vs random | +15.4 | +7.7 to +23.9 | supported |
+| ESM-2 score vs random | +12.6 | +8.6 to +16.2 | supported |
+| baseline vs random | +3.3 | +0.0 to +6.9 | marginal |
+| **EVOLVEpro-style vs assay-trained** | **+3.0** | **−0.1 to +6.2** | **not distinguishable** |
+| EVOLVEpro-style vs ESM-2 score | +5.8 | +0.0 to +12.0 | marginal |
+| EVOLVEpro-style vs baseline | +15.0 | +7.2 to +23.3 | supported |
+
+**On the held-out set, EVOLVEpro's procedure and AssayPilot's assay-trained
+method are not distinguishable.** The point estimate favours EVOLVEpro by
+three hits in 168 wells, and it is ahead in 18 of 25 pairs — but the interval
+spans zero, and it loses by nine hits on NusG. Under the bar AssayPilot sets
+for itself, that is a tie, and the right reading is that both clearly beat
+random while neither is shown to beat the other.
+
+On **GFP** the picture is sharper and splits two ways: EVOLVEpro's procedure
+clearly beats the assay-trained model (+19.0, +14.0 to +24.0) — a random
+forest copes with 98% multi-substitution variants where ridge-with-PCA does
+not — and the one-hot baseline clearly beats EVOLVEpro's procedure in turn
+(+11.2, +5.0 to +17.8).
+
+Both run on **the same ESM-2 embeddings**, so none of this is a statement
+about representations; it isolates the regression head and the selection rule.
 
 What the comparison does *not* establish:
 
 - It is a reimplementation of a published procedure, not the authors' code.
-  A result in EVOLVEpro's favour is the safer direction for that caveat to
-  cut, but it still holds: their defaults are reproduced, their pipeline is
-  not run.
+  Their defaults are reproduced; their pipeline is not run.
 - EVOLVEpro can seed its first round with k-medoid "diverse medoids" over
   PCA'd embeddings. The replay gives every strategy the same randomly drawn
   initial set so that seeds stay paired, so that part of their method is not
   exercised at all.
-- Twelve assays, five seeds. The per-seed counts show most *best-value*
-  differences still sitting inside the noise.
+- Twelve assays, five seeds. The intervals above are wide enough that the
+  interesting comparison lands in "not distinguishable".
 
-The obvious consequence — evaluating a random-forest head for AssayPilot's own
-suite — is deliberately **not** done here. Swapping a component because it won
-on the benchmark that just measured it is how a comparison suite stops meaning
-anything; the change belongs in its own pre-registered evaluation, ideally on
-assays none of these runs touched.
+There is still a case for evaluating a random-forest head for AssayPilot's own
+suite — it is never worse here and clearly better on multi-substitution data —
+but that change is deliberately **not** made off the back of this table.
+Swapping a component because it led on the benchmark that just measured it is
+how a comparison suite stops meaning anything. It belongs in its own
+pre-registered evaluation on assays none of these runs touched.
 
 ### What these runs support
 
-The headline is not that one of AssayPilot's methods wins — a reimplementation
-of someone else's method does, on average. It is that **the ranking of methods
+The headline is not which method wins. It is that **the ranking of methods
 reverses between datasets**: the baseline was the worst method on the
 development assays and the best on GFP; the pretrained score was the best on
 several single-mutant assays and worse than random on GFP. A tool that picked a
