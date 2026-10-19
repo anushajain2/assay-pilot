@@ -180,6 +180,10 @@ _TEMPLATE = """<!doctype html>
   <li>{{ reason }}</li>
 {% endfor %}
 </ul>
+<div class="panel small">
+  <strong>What this evaluation could have detected.</strong>
+  {{ power_statement }}
+</div>
 {% else %}
 <p>
   No held-out evaluation was performed for this run, so there is no assay-specific evidence
@@ -576,6 +580,7 @@ def build_context(plan: ExperimentPlan) -> dict[str, Any]:
                 "random_hit_rate": _fmt(evaluation.random_reference.get("hit_rate_at_k")),
                 "recommendation_rule": evaluation.recommendation.rule,
                 "recommendation_reasons": evaluation.recommendation.reasons,
+                "power_statement": evaluation.recommendation.power_statement,
                 "n_bootstrap": evaluation.n_bootstrap,
             }
         )

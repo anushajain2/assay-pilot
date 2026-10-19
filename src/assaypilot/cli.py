@@ -229,7 +229,10 @@ def cmd_plan(args: argparse.Namespace) -> int:
                 .to_string(index=False)
             ],
         )
-        _print_report("Why this method", evaluation.recommendation.reasons)
+        _print_report(
+            "Why this method",
+            [*evaluation.recommendation.reasons, "", evaluation.recommendation.power_statement],
+        )
 
     if plan.warnings:
         _print_report("Warnings", [f"- {w}" for w in plan.warnings])
@@ -302,7 +305,9 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     _print_report("Paired comparisons", [f"- {c.sentence}" for c in result.comparisons])
     _print_report(
         f"Recommendation ({result.recommendation.evidence_level})",
-        [result.recommendation.rule] + [f"- {r}" for r in result.recommendation.reasons],
+        [result.recommendation.rule]
+        + [f"- {r}" for r in result.recommendation.reasons]
+        + ["", result.recommendation.power_statement],
     )
 
     if args.output:

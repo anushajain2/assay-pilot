@@ -117,6 +117,19 @@ class PairedComparison:
         return bool(np.isfinite(self.ci_low) and self.ci_low > 0)
 
     @property
+    def resolution(self) -> float:
+        """The smallest difference this comparison could have told apart from zero.
+
+        Half the width of the 95% interval. An improvement smaller than this
+        would have produced an interval still straddling zero — reported as
+        "not distinguishable" — however real it was. Reporting it turns that
+        verdict from a shrug into a measurement of what the data can support.
+        """
+        if not (np.isfinite(self.ci_low) and np.isfinite(self.ci_high)):
+            return float("nan")
+        return float((self.ci_high - self.ci_low) / 2)
+
+    @property
     def sentence(self) -> str:
         if not np.isfinite(self.difference):
             return (
@@ -145,6 +158,7 @@ class PairedComparison:
             "fraction_better": self.fraction_better,
             "n_bootstrap": self.n_bootstrap,
             "distinguishable": self.distinguishable,
+            "resolution": self.resolution,
         }
 
 
@@ -158,10 +172,45 @@ class Recommendation:
     reasons: list[str]
     distinguishable: bool
     primary_metric: str
+    #: Smallest difference in the primary metric this evaluation could have
+    #: resolved, from the paired bootstrap against the chosen method.
+    resolution: float | None = None
+    #: Distinct held-out sequences the evaluation rested on.
+    n_test_sequences: int = 0
 
     @property
     def is_exploratory(self) -> bool:
         return self.evidence_level != "supported"
+
+    @property
+    def power_statement(self) -> str:
+        """What this evaluation could and could not have detected, in words.
+
+        "No method was distinguishable" is two different findings — the
+        methods are equivalent, or the data could not tell them apart — and
+        they call for opposite actions. This says which one happened.
+        """
+        metric = HUMAN_NAMES.get(self.primary_metric, self.primary_metric).lower()
+        if self.resolution is None or not np.isfinite(self.resolution):
+            return (
+                f"This evaluation rested on {self.n_test_sequences} distinct held-out"
+                " sequence(s); it was not possible to estimate how large a difference it"
+                " could have detected."
+            )
+        if self.distinguishable:
+            return (
+                f"With {self.n_test_sequences} distinct held-out sequences, this evaluation"
+                f" could resolve differences in {metric} larger than about"
+                f" {self.resolution:.3f}, and the improvement it adopted exceeds that."
+            )
+        return (
+            f"With {self.n_test_sequences} distinct held-out sequences, this evaluation could"
+            f" only resolve differences in {metric} larger than about {self.resolution:.3f}."
+            " A real improvement smaller than that would have looked exactly like this"
+            " result, so 'not distinguishable' here means the data could not tell, not that"
+            " the methods are equivalent. Measuring more variants, or holding out a larger"
+            " round, is what tightens it."
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -171,6 +220,9 @@ class Recommendation:
             "reasons": list(self.reasons),
             "distinguishable": self.distinguishable,
             "primary_metric": self.primary_metric,
+            "resolution": self.resolution,
+            "n_test_sequences": self.n_test_sequences,
+            "power_statement": self.power_statement,
         }
 
 
@@ -439,6 +491,32 @@ def _decide(
                 " so the resulting batch is exploratory."
             )
 
+    # How fine a difference could this evaluation have seen? Take it from the
+    # strongest challenger to the method that won: that is the comparison the
+    # decision actually turned on.
+    against_incumbent = [
+        comparison
+        for (method_key, reference_key), comparison in comparisons_by_pair.items()
+        if reference_key == incumbent and method_key != incumbent
+    ]
+    if not against_incumbent:
+        # When the incumbent is the most complex method, nothing was compared
+        # *against* it; the comparison that promoted it measures the same
+        # resampling noise, so read the resolution from there.
+        against_incumbent = [
+            comparison
+            for (method_key, _), comparison in comparisons_by_pair.items()
+            if method_key == incumbent
+        ]
+    finite = [c for c in against_incumbent if np.isfinite(c.resolution)]
+    resolution: float | None = None
+    if finite:
+
+        def point_estimate(comparison: PairedComparison) -> float:
+            return comparison.difference if np.isfinite(comparison.difference) else -np.inf
+
+        resolution = max(finite, key=point_estimate).resolution
+
     return Recommendation(
         method_key=incumbent,
         evidence_level=evidence,
@@ -446,6 +524,8 @@ def _decide(
         reasons=reasons,
         distinguishable=distinguishable,
         primary_metric=primary_metric,
+        resolution=resolution,
+        n_test_sequences=n_test_groups,
     )
 
 

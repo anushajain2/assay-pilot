@@ -125,6 +125,33 @@ number like that is not evidence of anything.
 
 ---
 
+## 5b. "Not distinguishable" says what could have been detected
+
+**Claimed.** Whenever the comparison reports that methods could not be told
+apart, it also reports the smallest difference the evaluation could have
+resolved — half the width of the paired bootstrap interval — and the number of
+distinct held-out sequences behind it.
+
+**Why.** "No method was distinguishable" conflates two findings that call for
+opposite actions: the methods are equivalent, or this dataset cannot tell. On
+the bundled example the figure is 0.115, meaning a genuine eleven-point
+improvement in hit rate would have been reported exactly the same way. Without
+the figure a researcher cannot know which situation they are in.
+
+**Not claimed.** That the figure is a formal power calculation against a
+specified alternative. It is the resolution of this evaluation's own
+resampling interval, which is what the decision rule reads.
+
+**Enforced by.** `PairedComparison.resolution` and
+`Recommendation.power_statement`, printed by the CLI, shown in the report, and
+stored in the manifest.
+
+**Tested by.** `tests/test_compare.py::test_a_null_result_says_what_it_could_have_detected`,
+`::test_the_resolution_tightens_with_more_held_out_data`,
+`::test_an_adopted_improvement_is_reported_as_exceeding_the_resolution`.
+
+---
+
 ## 6. Weak evidence is labelled, not dressed up
 
 **Claimed.** A plan is labelled `supported` only when the split was an

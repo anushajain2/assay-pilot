@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from assaypilot import load_measurements
-from assaypilot.evaluation.compare import evaluate_methods
+from assaypilot.evaluation.compare import PairedComparison, evaluate_methods
 from assaypilot.evaluation.metrics import (
     best_at_k,
     choose_primary_metric,
@@ -370,3 +370,84 @@ def test_every_split_is_scored_at_the_same_budget(campaign):
 
     budgets = {m.k for m in result.summaries["m"].per_split.values()}
     assert budgets == {result.k}, f"splits scored at different budgets: {budgets}"
+
+
+def test_the_resolution_is_the_half_width_of_the_interval():
+    comparison = PairedComparison(
+        method_key="b",
+        reference_key="a",
+        metric="spearman",
+        difference=0.02,
+        ci_low=-0.10,
+        ci_high=0.14,
+        fraction_better=0.6,
+        n_bootstrap=500,
+    )
+    assert comparison.resolution == pytest.approx(0.12)
+    assert not comparison.distinguishable
+
+
+def test_a_null_result_says_what_it_could_have_detected(campaign):
+    """'Not distinguishable' must distinguish 'equivalent' from 'we could not tell'."""
+    measurements = _measurements_with_rounds(campaign, n=120, seed=7)
+    plan = choose_split_plan(measurements)
+    truth = dict(zip(measurements.frame["sequence"], measurements.frame["value"], strict=True))
+    rng = np.random.default_rng(0)
+
+    simple = ConstantMethod("simple", 1, lambda s: truth[s] + rng.normal(0, 1.0))
+    complex_ = ConstantMethod("complex", 3, lambda s: truth[s] + rng.normal(0, 1.0))
+    result = evaluate_methods(
+        [simple, complex_], measurements, plan, campaign=campaign, k=5, n_bootstrap=200, seed=0
+    )
+
+    recommendation = result.recommendation
+    assert not recommendation.distinguishable
+    assert recommendation.resolution is not None and recommendation.resolution > 0
+    assert recommendation.n_test_sequences > 0
+
+    statement = recommendation.power_statement
+    assert f"{recommendation.n_test_sequences} distinct held-out sequences" in statement
+    assert "could only resolve differences" in statement
+    assert "not that the methods are equivalent" in statement
+    assert recommendation.to_dict()["power_statement"] == statement
+
+
+def test_an_adopted_improvement_is_reported_as_exceeding_the_resolution(campaign):
+    measurements = _measurements_with_rounds(campaign, n=120, seed=8)
+    plan = choose_split_plan(measurements)
+    truth = dict(zip(measurements.frame["sequence"], measurements.frame["value"], strict=True))
+    rng = np.random.default_rng(1)
+
+    noise = ConstantMethod("simple", 1, lambda s: rng.normal())
+    oracle = ConstantMethod("complex", 3, lambda s: truth[s])
+    result = evaluate_methods(
+        [noise, oracle], measurements, plan, campaign=campaign, k=5, n_bootstrap=200, seed=0
+    )
+
+    assert result.recommendation.distinguishable
+    statement = result.recommendation.power_statement
+    assert "the improvement it adopted exceeds that" in statement
+
+
+def test_the_resolution_tightens_with_more_held_out_data(campaign):
+    """More evidence must narrow what counts as undetectable, or the figure is not real."""
+    truth_noise = 1.0
+
+    def resolution_for(n: int) -> float:
+        measurements = _measurements_with_rounds(campaign, n=n, seed=11)
+        plan = choose_split_plan(measurements)
+        truth = dict(zip(measurements.frame["sequence"], measurements.frame["value"], strict=True))
+        rng = np.random.default_rng(3)
+        methods = [
+            ConstantMethod("simple", 1, lambda s: truth[s] + rng.normal(0, truth_noise)),
+            ConstantMethod("complex", 3, lambda s: truth[s] + rng.normal(0, truth_noise)),
+        ]
+        result = evaluate_methods(
+            methods, measurements, plan, campaign=campaign, k=5, n_bootstrap=300, seed=0
+        )
+        return result.recommendation.resolution
+
+    small = resolution_for(60)
+    large = resolution_for(240)
+    assert small is not None and large is not None
+    assert large < small, f"resolution did not tighten: {small:.3f} -> {large:.3f}"

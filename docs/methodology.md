@@ -165,6 +165,16 @@ Consequences, all intended:
   a model download and an inference budget;
 - the reasons are recorded as sentences, not just numbers.
 
+**What a null result means.** Every recommendation carries the smallest
+difference the evaluation could have resolved: half the width of the paired
+bootstrap interval, alongside the number of distinct held-out sequences. A
+verdict of "not distinguishable" with a resolution of 0.115 is not evidence
+that two methods are equivalent — it is a statement that this dataset could
+not have seen a difference below eleven points. The action that follows
+differs: equivalent methods mean use the simpler one and stop thinking about
+it; an unresolvable comparison means measure more before trusting any
+model-driven selection.
+
 **Evidence levels.** `supported` requires an extrapolation split, ≥20 distinct
 held-out sequences, and beating chance on whichever metric drove the decision —
 zero for a rank correlation, and the random-selection reference for a hit rate. Anything else is
