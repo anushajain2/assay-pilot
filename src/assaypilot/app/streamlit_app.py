@@ -19,6 +19,8 @@ made here and a plan made there are the same plan with the same manifest.
 from __future__ import annotations
 
 import io
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,7 @@ import streamlit as st
 
 from assaypilot import (
     Campaign,
+    CampaignStore,
     SelectionSettings,
     load_candidates,
     load_measurements,
@@ -53,7 +56,44 @@ EVIDENCE_STYLE = {
 }
 
 
+#: Where campaign history lives unless the researcher points somewhere else.
+DEFAULT_STORE = "campaigns.db"
+
+
 # ----------------------------------------------------------------- utilities
+
+
+@contextmanager
+def _store() -> Iterator[CampaignStore]:
+    """Open the campaign store for one operation.
+
+    A connection is opened per use rather than cached in session state:
+    Streamlit reruns the script on every interaction and may do so on a
+    different thread, which a long-lived SQLite connection does not survive.
+    """
+    store = CampaignStore(st.session_state.get("store_path", DEFAULT_STORE))
+    try:
+        yield store
+    finally:
+        store.close()
+
+
+def _campaign_is_saved(campaign_id: str) -> bool:
+    """Whether this campaign already exists in the store."""
+    try:
+        with _store() as store:
+            store.get_campaign(campaign_id)
+    except AssayPilotError:
+        return False
+    return True
+
+
+def _saved_campaigns() -> pd.DataFrame:
+    try:
+        with _store() as store:
+            return store.list_campaigns()
+    except Exception:  # a missing or unreadable store is not an error to show here
+        return pd.DataFrame()
 
 
 def _state(key: str, default: Any = None) -> Any:
@@ -114,9 +154,34 @@ def screen_campaign() -> None:
         " pooled automatically."
     )
 
-    existing = st.file_uploader(
-        "Load an existing campaign.json", type=["json"], key="campaign_file"
-    )
+    saved = _saved_campaigns()
+    if not saved.empty:
+        st.subheader("Open a saved campaign")
+        st.caption(
+            "Campaigns, their rounds and the plans made from them are kept in"
+            f" `{st.session_state.get('store_path', DEFAULT_STORE)}`, so a campaign started"
+            " weeks ago can be reopened and its predictions scored when the plate reads out."
+        )
+        labels = {
+            f"{row.campaign_id}  ·  {row.n_measurements} measurements,"
+            f" {row.n_rounds} round(s), {row.n_runs} plan(s)": row.campaign_id
+            for row in saved.itertuples(index=False)
+        }
+        choice = st.selectbox("Saved campaigns", ["—"] + list(labels), key="saved_pick")
+        if choice != "—" and st.button("Open this campaign"):
+            campaign_id = labels[choice]
+            with _store() as store:
+                st.session_state["campaign"] = store.get_campaign(campaign_id)
+                stored = store.load_measurements(campaign_id)
+            if not stored.frame.empty:
+                st.session_state["measurements"] = stored
+            st.session_state.pop("plan", None)
+            st.success(
+                f"Opened {campaign_id} with {len(stored)} stored measurement(s)."
+                " Its history is on the Next round tab."
+            )
+
+    existing = st.file_uploader("Or load a campaign.json file", type=["json"], key="campaign_file")
     if existing is not None:
         import json
         import tempfile
@@ -185,7 +250,7 @@ def screen_campaign() -> None:
 
     if submitted:
         try:
-            st.session_state["campaign"] = Campaign(
+            candidate_campaign = Campaign(
                 campaign_id=campaign_id,
                 reference_sequence=reference,
                 assay_name=assay_name,
@@ -195,7 +260,24 @@ def screen_campaign() -> None:
                 success_threshold=float(threshold) if use_threshold else None,
                 selection=SelectionSettings(batch_size=int(batch_size)),
             )
-            st.success("Campaign saved. Move on to Data review.")
+            st.session_state["campaign"] = candidate_campaign
+            # Persisting here is what makes the round loop work later: a plan
+            # can only be scored against new measurements if the campaign it
+            # belongs to outlived the browser tab.
+            with _store() as store:
+                if _campaign_is_saved(candidate_campaign.campaign_id):
+                    version = store.update_campaign(
+                        candidate_campaign, note="edited in the interface"
+                    )
+                    st.success(
+                        f"Campaign updated (version {version}) and saved to"
+                        f" {store.path.name}. Move on to Data review."
+                    )
+                else:
+                    store.create_campaign(candidate_campaign)
+                    st.success(
+                        f"Campaign created and saved to {store.path.name}. Move on to Data review."
+                    )
         except AssayPilotError as exc:
             st.error(str(exc))
 
@@ -284,6 +366,31 @@ def screen_data() -> None:
                 st.dataframe(describe_splits(plan.splits), hide_index=True)
                 for warning in plan.warnings:
                     st.warning(warning)
+            except AssayPilotError as exc:
+                st.error(str(exc))
+
+    if measurements is not None and _campaign_is_saved(campaign.campaign_id):
+        st.subheader("Keep these measurements with the campaign")
+        st.caption(
+            "Stored measurements are what a later session reloads, and what the next"
+            " round's scorecard is compared against. Adding a round creates a new campaign"
+            " version; nothing recorded earlier changes."
+        )
+        columns = st.columns([2, 1])
+        round_id = columns[0].text_input("Round label", value="R1", key="round_label")
+        if columns[1].button("Add as a round"):
+            try:
+                with _store() as store:
+                    version = store.add_round(
+                        campaign.campaign_id,
+                        measurements,
+                        round_id=round_id or None,
+                        source=str(getattr(measurements_upload, "name", "interface upload")),
+                    )
+                st.success(
+                    f"Stored {len(measurements)} measurement(s) as round {round_id}"
+                    f" (campaign version {version})."
+                )
             except AssayPilotError as exc:
                 st.error(str(exc))
 
@@ -400,6 +507,25 @@ def screen_plan() -> None:
                 )
             except AssayPilotError as exc:
                 st.error(str(exc))
+            else:
+                # A plan that is not recorded cannot be scored when the results
+                # arrive, which is the loop this tool exists for.
+                if _campaign_is_saved(campaign.campaign_id):
+                    try:
+                        with _store() as store:
+                            store.save_run(st.session_state["plan"])
+                        st.caption(
+                            f"Recorded as run `{st.session_state['plan'].run_id}` in the"
+                            " campaign history."
+                        )
+                    except AssayPilotError as exc:
+                        st.warning(f"The plan was produced but not recorded: {exc}")
+                else:
+                    st.info(
+                        "This campaign is not saved, so the plan was not recorded and cannot"
+                        " be scored later. Save the campaign on the first tab to keep its"
+                        " history."
+                    )
 
     plan = st.session_state.get("plan")
     if plan is None:
@@ -536,16 +662,77 @@ def screen_plan() -> None:
 
 def screen_rounds() -> None:
     st.header("4 · Next round")
-    plan = st.session_state.get("plan")
     campaign: Campaign | None = st.session_state.get("campaign")
-    if plan is None or campaign is None:
-        st.warning("Produce a plan first, then come back when the results arrive.")
+    if campaign is None:
+        st.warning("Open or define a campaign first.")
         return
 
     st.caption(
         "Predictions are scored against the new measurements before anything is retrained."
-        " This is the only prospective evidence AssayPilot ever produces."
+        " This is the only prospective evidence AssayPilot ever produces, and it works on"
+        " plans made in an earlier session: the campaign history outlives this browser tab."
     )
+
+    saved = _campaign_is_saved(campaign.campaign_id)
+    runs = pd.DataFrame()
+    if saved:
+        with _store() as store:
+            runs = store.list_runs(campaign.campaign_id)
+            history = store.history(campaign.campaign_id)
+        if not runs.empty:
+            st.subheader("Plans recorded for this campaign")
+            columns = [
+                c
+                for c in (
+                    "run_id",
+                    "created_at",
+                    "method",
+                    "evidence_level",
+                    "n_selected",
+                    "n_matched",
+                    "spearman",
+                    "hit_rate",
+                    "best_observed",
+                )
+                if c in history.columns
+            ]
+            st.dataframe(history[columns], hide_index=True, use_container_width=True)
+
+    # Which plan are we scoring: one from the store, or the one just made?
+    in_memory = st.session_state.get("plan")
+    options: dict[str, Any] = {}
+    if not runs.empty:
+        for row in runs.itertuples(index=False):
+            options[f"{row.run_id}  ·  {row.created_at}  ·  {row.method}"] = row.run_id
+    if in_memory is not None and in_memory.run_id not in options.values():
+        options[f"{in_memory.run_id}  ·  just planned in this session"] = in_memory.run_id
+
+    if not options:
+        st.info(
+            "No plan to score yet. Produce one on the previous tab — and save the campaign"
+            " first, so the plan is recorded and can still be scored weeks from now."
+        )
+        return
+
+    chosen_label = st.selectbox("Plan to score", list(options), key="run_to_score")
+    chosen_run = options[chosen_label]
+
+    manifest = None
+    if in_memory is not None and in_memory.run_id == chosen_run:
+        manifest = in_memory.manifest
+    else:
+        with _store() as store:
+            manifest = store.get_run(chosen_run).manifest
+        with _store() as store:
+            st.dataframe(
+                store.selections(chosen_run)[
+                    ["selection_rank", "design_id", "mutations", "score", "reason"]
+                ].head(10),
+                hide_index=True,
+                use_container_width=True,
+            )
+        st.caption("The first ten selections of that plan, as recorded when it was made.")
+
     upload = st.file_uploader("New round measurements", type=["csv", "tsv", "parquet"])
     if upload is None:
         return
@@ -557,17 +744,50 @@ def screen_rounds() -> None:
         return
 
     _show_report(results.report, "New measurements")
-    scorecard = score_round(
-        plan.manifest,
-        results,
-        campaign=campaign,
-        previous_measurements=st.session_state.get("measurements"),
-    )
+
+    previous = st.session_state.get("measurements")
+    if previous is None and saved:
+        with _store() as store:
+            stored = store.load_measurements(campaign.campaign_id)
+        previous = stored if not stored.frame.empty else None
+
+    scorecard = score_round(manifest, results, campaign=campaign, previous_measurements=previous)
 
     for line in scorecard.summary_lines():
         st.write(f"- {line}")
     if not scorecard.matched.empty:
         st.dataframe(scorecard.matched, hide_index=True, use_container_width=True)
+
+    if saved:
+        st.subheader("Add this round to the campaign")
+        st.caption(
+            "The scorecard is kept with the plan it judges, and the measurements are appended"
+            " as a new version. Earlier plans and their predictions are never modified."
+        )
+        columns = st.columns([2, 1])
+        round_id = columns[0].text_input("Round label", value="R-next", key="next_round_label")
+        if columns[1].button("Record round and scorecard"):
+            try:
+                with _store() as store:
+                    store.save_scorecard(scorecard)
+                    version = store.add_round(
+                        campaign.campaign_id,
+                        results,
+                        round_id=round_id or None,
+                        source=getattr(upload, "name", "interface upload"),
+                    )
+                st.success(
+                    f"Scorecard saved and round {round_id} appended (campaign version"
+                    f" {version}). Plan again on the previous tab to use the new data."
+                )
+                st.session_state.pop("measurements", None)
+            except AssayPilotError as exc:
+                st.error(str(exc))
+    else:
+        st.info(
+            "This campaign is not saved, so the scorecard cannot be kept. Save the campaign"
+            " on the first tab to build a history across rounds."
+        )
 
 
 # ------------------------------------------------------------------- layout
@@ -575,6 +795,15 @@ def screen_rounds() -> None:
 
 def main() -> None:
     st.title("AssayPilot")
+    st.sidebar.text_input(
+        "Campaign history file",
+        value=st.session_state.get("store_path", DEFAULT_STORE),
+        key="store_path",
+        help=(
+            "A local SQLite file holding campaigns, rounds, plans and scorecards."
+            " It never leaves this machine."
+        ),
+    )
     st.caption(
         "Plan the next round of protein variant experiments from the measurements you already"
         " have. Everything runs locally; no measurement leaves this machine."
@@ -598,4 +827,9 @@ def main() -> None:
         screen_rounds()
 
 
-main()
+# Streamlit executes this file as a script, with __name__ set to "__main__".
+# Guarding the call keeps the module importable — by tests, by tooling, by
+# anything that wants `DEFAULT_STORE` — without running a whole app as a side
+# effect of the import.
+if __name__ == "__main__":
+    main()

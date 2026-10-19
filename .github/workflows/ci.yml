@@ -68,10 +68,10 @@ jobs:
           path: ~/.cache/huggingface
           key: hf-esm2-8M-v1
 
-      - name: Install with the esm extra
+      - name: Install with the esm and app extras
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[esm,dev]"
+          python -m pip install -e ".[esm,app,dev]"
 
       # The smallest ESM-2 release: enough to check tokenizer offsets, pooling,
       # additivity, and revision recording without a large download.
@@ -79,6 +79,11 @@ jobs:
         env:
           ASSAYPILOT_TEST_CHECKPOINT: facebook/esm2_t6_8M_UR50D
         run: pytest -m slow -q
+
+      # The interface tests need Streamlit, so they only run in this job; the
+      # core suite skips them.
+      - name: Test the interface
+        run: pytest tests/test_app.py -q
 
       # The fast suite must stay offline even when torch is installed.
       - name: Confirm the fast suite needs no model weights

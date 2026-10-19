@@ -214,6 +214,12 @@ assaypilot app
 
 Four screens: import and review, model evidence, batch selection, round history.
 
+The interface keeps its campaigns, rounds, plans and scorecards in a local SQLite file
+(`campaigns.db` by default, set in the sidebar) — the same store the CLI writes with
+`--store`. That is what makes the round loop work in the browser: a campaign opened weeks
+later still has the plan it produced, and the new plate's results can be scored against the
+predictions made back then. Nothing is uploaded; the file stays on your machine.
+
 ---
 
 ## What a run actually says
